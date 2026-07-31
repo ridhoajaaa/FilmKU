@@ -1,0 +1,47 @@
+name: filmku
+description: "FilmKU — an ad-free movie streaming app. Dark, fast, and clean."
+publish_to: "none"
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.3.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # State management
+  flutter_riverpod: ^2.5.1
+  # Navigation
+  go_router: ^14.2.0
+  # Networking
+  dio: ^5.4.3
+  # Image loading & caching
+  cached_network_image: ^3.3.1
+  # Native video playback (HLS / m3u8 / mp4)
+  video_player: ^2.9.1
+  # Local storage (Watchlist & Settings)
+  hive: ^2.2.3
+  hive_flutter: ^1.1.0
+  path_provider: ^2.1.3
+  # Headless WebView used to extract direct stream URLs (no visible ads)
+  flutter_inappwebview: ^6.1.5
+  # Material icons
+  cupertino_icons: ^1.0.8
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+dependency_overrides:
+  # Vendored copy of flutter_inappwebview_android with a one-line proguard fix
+  # for AGP 9 (getDefaultProguardFile('proguard-android.txt') was removed). The
+  # pub-cache version is unpatched, so this local override keeps the fix
+  # permanent across machines/CI. See third_party/README.md and the Android
+  # Build Notes section of the main README.
+  flutter_inappwebview_android:
+    path: third_party/flutter_inappwebview_android
+
+flutter:
+  uses-material-design: true

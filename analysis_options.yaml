@@ -1,0 +1,16 @@
+include: package:flutter_lints/flutter.yaml
+
+# Vendored third-party packages are analyzed against their own rules; exclude
+# them here so upstream lint noise (e.g. constant_identifier_names in
+# flutter_inappwebview_android) doesn't fail `flutter analyze`.
+analyzer:
+  exclude:
+    - third_party/**
+
+linter:
+  rules:
+    prefer_const_constructors: true
+    prefer_const_declarations: true
+    prefer_final_fields: true
+    avoid_print: true
+    unawaited_futures: false
