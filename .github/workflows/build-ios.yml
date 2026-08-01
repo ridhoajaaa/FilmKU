@@ -15,6 +15,12 @@ on:
   push:
     branches: [main]
 
+# softprops/action-gh-release@v2 needs contents: write to publish Release
+# assets. Explicit so the workflow keeps working even if the repo/org later
+# tightens the default GITHUB_TOKEN scope to read-only.
+permissions:
+  contents: write
+
 jobs:
   build-ios:
     runs-on: macos-latest
@@ -51,3 +57,21 @@ jobs:
           name: filmku-ios-unsigned
           path: FilmKU-unsigned.ipa
           if-no-files-found: error
+
+      - name: Publish IPA as a GitHub Release asset
+        # GitHub Actions artifacts can only be downloaded by an authenticated
+        # user, but Release assets on a PUBLIC repo are downloadable by anyone
+        # (no token). This lets the user grab the IPA from Linux without a
+        # GitHub token: https://github.com/<owner>/FilmKU/releases/latest
+        # (The release is tagged per run-id so every build gets its own asset;
+        # the previous release is not deleted.)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ios-build-${{ github.run_id }}
+          name: FilmKU iOS IPA (build ${{ github.run_id }})
+          body: |
+            Unsigned iOS IPA built by the free cloud workflow.
+            Install with Sideloadly / SideStore / AltStore + a free Apple ID.
+          files: FilmKU-unsigned.ipa
+          fail_on_unmatched_files: true
