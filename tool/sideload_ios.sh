@@ -5,9 +5,12 @@
 # How it works:
 #   AltServer-Linux (NyaMisty) talks to Apple's signing service with your
 #   Apple ID, fetches a free development certificate + provisioning profile,
-#   re-signs the IPA (this is what zsign does under the hood), and installs
-#   it via libimobiledevice (ideviceinstaller) over USB. One command, end to
-#   end — and it is fully re-runnable for the 7-day expiry cycle.
+#   re-signs the IPA with its OWN signing implementation, and installs it via
+#   libimobiledevice (ideviceinstaller) over USB. One command, end to end —
+#   and it is fully re-runnable for the 7-day expiry cycle.
+#
+#   (zsign is a separate manual re-signer kept in tooling docs as a fallback;
+#   this script does not use it.)
 #
 # Usage:
 #   ./tool/sideload_ios.sh <filmku-unsigned.ipa> <APPLE_ID> [APP_SPECIFIC_PASSWORD]
@@ -22,8 +25,9 @@
 #                             you@icloud.com
 #   - <APPLE_ID>        your Apple ID email, e.g. you@icloud.com
 #   - [password]        optional as argument; if omitted, you are prompted
-#                       (safer — avoids the password appearing in shell
-#                       history / process list).
+#                       (avoids the password landing in your shell history).
+#                       Note: AltServer-Linux only accepts -p as a CLI arg, so
+#                       the password is briefly visible in `ps` while it runs.
 #
 # Security tip: prefer an App-Specific Password
 #   appleid.apple.com -> Sign-In & Security -> App-Specific Passwords
