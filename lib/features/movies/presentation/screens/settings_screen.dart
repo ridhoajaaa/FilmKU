@@ -112,6 +112,19 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             onChanged: (value) =>
                 ref.read(settingsProvider.notifier).setFallbackWebview(value),
           ),
+          SwitchListTile(
+            secondary: const Icon(Icons.http, color: AppColors.accent),
+            title: const Text('Browser headers (experimental)'),
+            subtitle: const Text(
+              'Send Referer/Origin/User-Agent on native media requests. '
+              'Some CDNs (e.g. VidLink) reject bare ExoPlayer fetches — '
+              'try this if a source fails to play natively.',
+              style: TextStyle(color: AppColors.textMuted, fontSize: 12),
+            ),
+            value: settings.browserHeaders,
+            onChanged: (value) =>
+                ref.read(settingsProvider.notifier).setBrowserHeaders(value),
+          ),
           const Divider(height: 24),
           const _SectionTitle('Video Sources'),
           ...SourceAggregator.extractors.map(

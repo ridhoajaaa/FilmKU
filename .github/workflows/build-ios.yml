@@ -1,0 +1,53 @@
+# Build an unsigned iOS IPA entirely in the cloud — no Mac, no paid Apple
+# Developer account ($99). Free Apple-ID sideloading tools (Sideloadly,
+# AltStore, SideStore, Feather) sign & install the artifact on-device.
+#
+# How to use:
+#   1. Push this repo to GitHub (public or private — public repos get free
+#      macOS runner minutes).
+#   2. Actions tab → "Build iOS (free, no Mac)" → Run workflow (or push).
+#   3. Download the `filmku-ios-unsigned` artifact → install via the
+#      sideloading tool of your choice (see README "iOS (tanpa Mac)").
+name: Build iOS (free, no Mac)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  build-ios:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Resolve dependencies
+        run: flutter pub get
+
+      - name: Build unsigned release .app
+        # --no-codesign: no signing certificates are needed on the runner.
+        # The Podfile / iOS pods are generated automatically on first build.
+        run: flutter build ios --release --no-codesign
+
+      - name: Package unsigned .ipa
+        # An IPA is just Payload/<App>.app zipped. Sideloadly / AltStore /
+        # SideStore / Feather sign this on install with a free Apple ID.
+        run: |
+          mkdir -p Payload
+          cp -r build/ios/iphoneos/Runner.app Payload/
+          zip -r FilmKU-unsigned.ipa Payload
+          rm -rf Payload
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: filmku-ios-unsigned
+          path: FilmKU-unsigned.ipa
+          if-no-files-found: error

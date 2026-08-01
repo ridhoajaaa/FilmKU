@@ -7,6 +7,8 @@ import '../../features/movies/presentation/screens/player_screen.dart';
 import '../../features/movies/presentation/screens/search_screen.dart';
 import '../../features/movies/presentation/screens/settings_screen.dart';
 import '../../features/movies/presentation/screens/watchlist_screen.dart';
+import '../../features/movies/presentation/screens/mpv_player_screen.dart';
+import '../../features/movies/presentation/screens/webview_player_screen.dart';
 
 /// GoRouter configuration. The bottom-tab screens live inside a
 /// [StatefulShellRoute.indexedStack] so each tab keeps its scroll state;
@@ -67,6 +69,18 @@ final appRouter = GoRouter(
       name: 'player',
       builder: (context, state) =>
           PlayerScreen(movieId: int.parse(state.pathParameters['id']!)),
+    ),
+    GoRoute(
+      path: '/webview-player',
+      name: 'webviewPlayer',
+      builder: (context, state) =>
+          WebViewPlayerScreen(args: state.extra! as WebViewPlayerArgs),
+    ),
+    GoRoute(
+      path: '/mpv-player',
+      name: 'mpvPlayer',
+      builder: (context, state) =>
+          MpvPlayerScreen(args: state.extra! as MpvPlayerArgs),
     ),
   ],
 );

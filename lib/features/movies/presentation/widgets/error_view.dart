@@ -7,11 +7,22 @@ class ErrorView extends StatelessWidget {
     super.key,
     required this.message,
     this.onRetry,
+    this.secondaryLabel,
+    this.onSecondary,
+    this.secondaryHint,
     this.compact = false,
   });
 
   final String message;
   final VoidCallback? onRetry;
+
+  /// Optional secondary action (e.g. "Play in WebView" fallback).
+  final String? secondaryLabel;
+  final VoidCallback? onSecondary;
+
+  /// Optional small hint shown under the secondary action (e.g. "May show
+  /// source ads"). Null renders no hint.
+  final String? secondaryHint;
   final bool compact;
 
   @override
@@ -44,6 +55,28 @@ class ErrorView extends StatelessWidget {
               side: const BorderSide(color: AppColors.accent),
             ),
           ),
+        ],
+        if (secondaryLabel != null && onSecondary != null) ...[
+          const SizedBox(height: 10),
+          FilledButton.icon(
+            onPressed: onSecondary,
+            icon: const Icon(Icons.language, size: 18),
+            label: Text(secondaryLabel!),
+            style: FilledButton.styleFrom(
+              backgroundColor: AppColors.accent,
+              foregroundColor: Colors.white,
+            ),
+          ),
+          if (secondaryHint != null) ...[
+            const SizedBox(height: 6),
+            Text(
+              secondaryHint!,
+              style: const TextStyle(
+                color: AppColors.textMuted,
+                fontSize: 11,
+              ),
+            ),
+          ],
         ],
       ],
     );

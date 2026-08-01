@@ -11,21 +11,25 @@ class SettingsState {
     required this.apiKey,
     required this.headlessExtraction,
     required this.fallbackWebview,
+    required this.browserHeaders,
   });
 
   final String apiKey;
   final bool headlessExtraction;
   final bool fallbackWebview;
+  final bool browserHeaders;
 
   SettingsState copyWith({
     String? apiKey,
     bool? headlessExtraction,
     bool? fallbackWebview,
+    bool? browserHeaders,
   }) =>
       SettingsState(
         apiKey: apiKey ?? this.apiKey,
         headlessExtraction: headlessExtraction ?? this.headlessExtraction,
         fallbackWebview: fallbackWebview ?? this.fallbackWebview,
+        browserHeaders: browserHeaders ?? this.browserHeaders,
       );
 }
 
@@ -36,6 +40,7 @@ class SettingsNotifier extends StateNotifier<SettingsState> {
           apiKey: _service.apiKey,
           headlessExtraction: _service.headlessExtraction,
           fallbackWebview: _service.fallbackWebview,
+          browserHeaders: _service.browserHeaders,
         ));
 
   final SettingsService _service;
@@ -53,6 +58,11 @@ class SettingsNotifier extends StateNotifier<SettingsState> {
   void setFallbackWebview(bool value) {
     _service.setFallbackWebview(value);
     state = state.copyWith(fallbackWebview: value);
+  }
+
+  void setBrowserHeaders(bool value) {
+    _service.setBrowserHeaders(value);
+    state = state.copyWith(browserHeaders: value);
   }
 }
 

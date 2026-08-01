@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import 'package:media_kit/media_kit.dart';
 
 import 'app.dart';
 import 'core/local/settings_service.dart';
@@ -8,6 +9,8 @@ import 'features/movies/data/local/watchlist_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // libmpv (media_kit) must be initialized before any Player is created.
+  MediaKit.ensureInitialized();
 
   // Local storage must be ready before any provider reads it.
   await Hive.initFlutter();

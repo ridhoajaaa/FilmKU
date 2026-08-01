@@ -20,6 +20,16 @@ dependencies:
   cached_network_image: ^3.3.1
   # Native video playback (HLS / m3u8 / mp4)
   video_player: ^2.9.1
+  # libmpv-backed playback (media_kit): transparently falls back to software
+  # decoding, which plays HLS MPEG-TS streams that ExoPlayer's MediaCodec
+  # renderer crashes on (observed: `MediaCodecVideoRenderer error` on Xiaomi).
+  # Used as the native destination for WebView-handoff streams.
+  media_kit: ^1.1.11
+  media_kit_video: ^1.2.4
+  media_kit_libs_android_video: ^1.1.5
+  # iOS needs its own libmpv binaries — WITHOUT this the iOS build compiles
+  # but the native (mpv) player has no renderer. Android is unaffected.
+  media_kit_libs_ios_video: ^1.1.4
   # Local storage (Watchlist & Settings)
   hive: ^2.2.3
   hive_flutter: ^1.1.0
@@ -31,6 +41,8 @@ dependencies:
 
 dev_dependencies:
   flutter_test:
+    sdk: flutter
+  integration_test:
     sdk: flutter
   flutter_lints: ^4.0.0
 
