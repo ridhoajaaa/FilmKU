@@ -50,3 +50,5 @@ app.*.map.json
 
 # Node/puppeteer leftovers from dev probing scripts
 node_modules/
+package.json
+package-lock.json
