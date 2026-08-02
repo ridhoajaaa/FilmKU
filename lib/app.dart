@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'core/router/app_router.dart';
@@ -8,10 +9,15 @@ class FilmKuApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // iOS gets its own liquid-glass theme; every other platform keeps the
+    // classic dark UI. The tab-bar shell is platform-aware too (AppShell).
+    final theme = defaultTargetPlatform == TargetPlatform.iOS
+        ? AppTheme.ios
+        : AppTheme.dark;
     return MaterialApp.router(
       title: 'FilmKU',
       debugShowCheckedModeBanner: false,
-      theme: AppTheme.dark,
+      theme: theme,
       routerConfig: appRouter,
     );
   }

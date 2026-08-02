@@ -17,7 +17,17 @@ class WatchlistScreen extends ConsumerWidget {
       body: movies.isEmpty
           ? const _EmptyWatchlist()
           : GridView.builder(
-              padding: const EdgeInsets.all(16),
+              padding: EdgeInsets.only(
+                // iOS: clear the floating glass capsule (extendBody content
+                // scrolls under the bar) so the last row is always reachable.
+                left: 16,
+                right: 16,
+                top: 16,
+                bottom:
+                    Theme.of(context).platform == TargetPlatform.iOS
+                        ? 110
+                        : 16,
+              ),
               gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                 crossAxisCount: 3,
                 crossAxisSpacing: 12,

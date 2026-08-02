@@ -7,6 +7,7 @@ import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
 import '../../../../core/constants/app_constants.dart';
 import '../../../../core/local/settings_service.dart';
+import '../../../../core/webview/capture_webview_settings.dart';
 import '../../domain/entities/video_source.dart';
 
 /// ---------------------------------------------------------------------------
@@ -231,19 +232,11 @@ class HeadlessStreamExtractor {
 
       view = HeadlessInAppWebView(
         initialUrlRequest: URLRequest(url: WebUri(url)),
-        // TEMP-DIAG + likely fix: the visible WebView fallback player passes
-        // the app's mobile Chrome UA + explicit JS settings, but the headless
-        // extractor previously sent the DEFAULT Android WebView UA — which
-        // source CDNs may serve differently / block. Align the headless
-        // WebView with the fallback player. Promote to a permanent fix if
-        // this unblocks on-device extraction.
-        initialSettings: InAppWebViewSettings(
-          userAgent: AppConstants.defaultUserAgent,
-          javaScriptEnabled: true,
-          mediaPlaybackRequiresUserGesture: false,
-          allowsInlineMediaPlayback: true,
-          javaScriptCanOpenWindowsAutomatically: true,
-        ),
+        // Shared builder: mobile Chrome UA + explicit JS settings AND the
+        // interception flags — iOS defaults shouldIntercept* to false, so
+        // without this the headless extractor can never capture media URLs
+        // on iOS (zero-stream bug). See capture_webview_settings.dart.
+        initialSettings: buildCaptureWebViewSettings(),
         onWebViewCreated: (controller) {
           debugPrint('FILMKU_EXTRACT_HEADLESS webViewCreated');
         },
@@ -412,11 +405,9 @@ class HeadlessStreamExtractor {
           'autoplay muted></video></body></html>';
       view = HeadlessInAppWebView(
         initialUrlRequest: URLRequest(url: WebUri(testUrl)),
-        initialSettings: InAppWebViewSettings(
-          userAgent: AppConstants.defaultUserAgent,
-          javaScriptEnabled: true,
-          mediaPlaybackRequiresUserGesture: false,
-        ),
+        // Same interception-enabled settings as the real extractor so the
+        // sanity check exercises the exact configuration extraction uses.
+        initialSettings: buildCaptureWebViewSettings(),
         onWebViewCreated: (controller) {
           webViewCreated = true;
           debugPrint('FILMKU_EXTRACT_SANITY webViewCreated');

@@ -5,7 +5,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
-import '../../../../core/constants/app_constants.dart';
+import '../../../../core/webview/capture_webview_settings.dart';
 import 'stream_capture_core.dart';
 
 /// WebView that loads a source embed page and captures the direct media URL
@@ -280,16 +280,12 @@ class _HiddenStreamCaptureState extends State<HiddenStreamCapture> {
       ignoring: true,
       child: InAppWebView(
         initialUrlRequest: URLRequest(url: WebUri(widget.url)),
-        initialSettings: InAppWebViewSettings(
-          userAgent: AppConstants.defaultUserAgent,
-          javaScriptEnabled: true,
-          mediaPlaybackRequiresUserGesture: false,
-          allowsInlineMediaPlayback: true,
-          // Some players open a popup/blank target for their player
-          // iframe — the visible WebView proves this setting is needed,
-          // so mirror it here exactly.
-          javaScriptCanOpenWindowsAutomatically: true,
-        ),
+        // Interception callbacks (request/fetch/ajax) must be explicitly
+        // enabled on iOS (they default to false there, on vs. off on
+        // Android) — otherwise the capture never sees the stream URL and
+        // times out into the visible WebView. Shared builder keeps every
+        // capture WebView consistent. See capture_webview_settings.dart.
+        initialSettings: buildCaptureWebViewSettings(),
         onWebViewCreated: (controller) {
           _controller = controller;
           _injectAllFramesScript(controller);

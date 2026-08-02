@@ -381,6 +381,78 @@ flutter doctor   # Android toolchain should be green
 
 ## 📝 Changelog
 
+### `2026-08-02` — iOS liquid-glass UI verified: golden tests + live-preview flag + capsule overflow fix
+
+Verifying the iOS UI on a Linux host (no simulator, iPhone not always
+connected) is now automated:
+
+- **`FILMKU_FORCE_IOS_UI=true` dart-define (debug only)** — forces the iOS
+theme + floating glass capsule on any platform, so the real iOS UI can be
+previewed on Linux:
+  `flutter run -d linux --dart-define=FILMKU_FORCE_IOS_UI=true`.
+- **Golden tests** (`test/ios_ui_golden_test.dart`) render the shell at iPhone
+  14 logical size (390×844): iOS liquid-glass golden, Android classic golden
+  (contrast), and a geometry test proving the floating capsule **never covers
+  scrolled content** (last row ends 28px above the capsule thanks to the 110px
+  iOS bottom padding). `test/flutter_test_config.dart` loads real
+  Roboto/MaterialIcons from the SDK cache so goldens show real glyphs
+  (fail-safe Ahem fallback with a notice).
+- **`tool/analyze_ios_golden.py`** + **`tool/check_live_ios_screenshot.py`** —
+  pixel-verify the capsule renders (aqua accent band) and differs from the
+  Android shell; the latter scans a screenshot of the live Linux run.
+- **Real bug found & fixed:** the golden test caught `_GlassTabItem`'s inner
+  Column overflowing ~2.6px under real fonts (RenderFlex — this would also
+  overflow on a real iPhone). Fixed: pill margin 10→6, icon 22→21, gap 3→2,
+  `mainAxisSize.min`.
+
+**Verification:** `flutter analyze` clean, full suite **111/111 pass** (incl.
+the 3 new tests), live Linux run boots the forced-iOS UI. No real-iPhone
+screenshot on this host (no simulator; iPhone not connected at test time) —
+after the next iOS build, open the app on the iPhone and check the floating
+glass bar + that content scrolls clear of it.
+
+### `2026-08-02` — iOS: native-first extraction fix (interception flags) + liquid-glass UI
+
+**Why iOS always fell back to WebView (root cause, verified in package source):**
+on Android `shouldInterceptRequest`/`shouldInterceptFetchRequest`/
+`shouldInterceptAjaxRequest` fire by default, so the hidden auto-capture sees the
+stream URL and jumps straight into the native mpv player (`sumber 2/2 → mvp`).
+On iOS `flutter_inappwebview_ios` defaults **fetch/ajax interception to `false`**
+and the classic `shouldInterceptRequest` isn't implemented in the iOS native
+classes — so the hidden capture never saw a URL, timed out, and every movie fell
+back to the visible WebView (`finding stream → play in webview → mvp`).
+
+- **Fix:** new shared builder `lib/core/webview/capture_webview_settings.dart`
+  (`buildCaptureWebViewSettings()`), which sets
+  `useShouldInterceptRequest`/`Fetch`/`Ajax` **explicitly `true`** (with a
+  `captureEnabled` switch to turn them off where capture isn't wanted). Wired
+  into **all three** WebViews: the hidden auto-capture
+  (`hidden_stream_capture.dart`), the visible fallback
+  (`webview_player_screen.dart`) and the headless extractor
+  (`stream_source_datasource.dart` — both `extract()` and
+  `runSanityCheckOnce()`). iOS now captures natively like Android; the WebView
+  remains a manual last-resort only.
+- **New iOS-only liquid-glass UI** (Android untouched):
+  - `AppTheme.ios` in `lib/core/theme/app_theme.dart` — translucent dark
+glass surfaces, blurred scrims, iOS accent; `lib/app.dart` picks it via
+`defaultTargetPlatform == iOS`.
+  - `app_shell.dart` is now platform-aware: on iOS a **floating glass capsule
+tab bar** (Home / Search / Favorite / Settings — Instagram-style, `extendBody`
++ `BackdropFilter` blur + active gradient pill) replaces the classic Material
+bottom bar; the 4 tab screens get iOS bottom padding (110) so content isn't
+hidden behind the floating capsule, and `HomeScreen` gets a glass header variant.
+- **Tests:** `test/capture_webview_settings_test.dart` (interception flags
+  on/off), `test/app_shell_test.dart` (iOS glass capsule vs Android Material
+  bottom nav, tab switching) using a `withPlatform()` try/finally pattern to
+  avoid the `debugAssertAllFoundationVarsUnset` invariant failure in this
+  Flutter version.
+
+**Verification:** `flutter analyze` clean, full suite **108/108 pass**.
+On-device iPhone retest still pending (install via Sideloader — expect
+`sumber 2/2 → mvp` directly, no WebView detour). If the iOS hidden capture
+still times out, the next suspect is a media-loader-fetched manifest (not
+`fetch()`/XHR), which JS-bridge interception can't see.
+
 ### `2026-08-02` — iOS sideload tooling: Sideloader binary + `resign_ios.sh`
 
 First-ever **successful free-Apple-ID install of FilmKU on a real iPhone**

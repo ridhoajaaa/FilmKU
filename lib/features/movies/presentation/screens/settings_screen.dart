@@ -70,6 +70,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     return Scaffold(
       appBar: AppBar(title: const Text('Settings')),
       body: ListView(
+        // iOS: clear the floating glass capsule so the last tile is never
+        // hidden behind it (extendBody content scrolls under the bar).
+        padding: EdgeInsets.only(
+          bottom: Theme.of(context).platform == TargetPlatform.iOS ? 110 : 0,
+        ),
         children: [
           const _SectionTitle('TMDB API'),
           ListTile(

@@ -6,8 +6,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../../../core/constants/app_constants.dart';
 import '../../../../core/theme/app_colors.dart';
+import '../../../../core/webview/capture_webview_settings.dart';
 import '../widgets/error_view.dart';
 import '../widgets/stream_capture_core.dart';
 
@@ -525,14 +525,10 @@ class _WebViewPlayerScreenState extends State<WebViewPlayerScreen> {
             children: [
               InAppWebView(
                 initialUrlRequest: URLRequest(url: WebUri(widget.args.url)),
-                initialSettings: InAppWebViewSettings(
-                  userAgent: AppConstants.defaultUserAgent,
-                  javaScriptEnabled: true,
-                  mediaPlaybackRequiresUserGesture: false,
-                  allowsInlineMediaPlayback: true,
-                  // Some players need a popup/blank target for their iframe.
-                  javaScriptCanOpenWindowsAutomatically: true,
-                ),
+                // Interception (request/fetch/ajax) must be explicitly on for
+                // iOS — defaults are false there, on Android they default on.
+                // Shared builder keeps every capture WebView consistent.
+                initialSettings: buildCaptureWebViewSettings(),
                 onWebViewCreated: (controller) {
                   _controller = controller;
                   _injectAllFramesScript(controller);

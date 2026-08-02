@@ -1,3 +1,5 @@
+import 'dart:ui' show ImageFilter;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -27,7 +29,13 @@ class HomeScreen extends ConsumerWidget {
             ref.refresh(upcomingMoviesProvider.future),
           ]),
           child: ListView(
-            padding: EdgeInsets.zero,
+            // iOS: extra bottom padding clears the floating glass capsule
+            // (extendBody content scrolls under it) so the last row is never
+            // hidden behind the bar.
+            padding: EdgeInsets.only(
+              bottom:
+                  Theme.of(context).platform == TargetPlatform.iOS ? 110 : 0,
+            ),
             children: [
               const _HeaderBanner(),
               trending.when(
@@ -73,6 +81,51 @@ class _HeaderBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // iOS: liquid-glass header (blurred chip). Others: classic solid banner.
+    if (Theme.of(context).platform == TargetPlatform.iOS) {
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 10),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(22),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              decoration: BoxDecoration(
+                color: const Color(0x14141424),
+                borderRadius: BorderRadius.circular(22),
+                border: Border.all(color: const Color(0x28FFFFFF)),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.movie_filter,
+                      color: Color(0xFF4DE1FF), size: 26),
+                  SizedBox(width: 10),
+                  Text(
+                    'FilmKU',
+                    style: TextStyle(
+                      fontSize: 24,
+                      fontWeight: FontWeight.w800,
+                      color: Colors.white,
+                      letterSpacing: -0.4,
+                    ),
+                  ),
+                  Spacer(),
+                  Text(
+                    'No Ads • No Popups',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.white54,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    }
     return const Padding(
       padding: EdgeInsets.fromLTRB(16, 14, 16, 10),
       child: Row(
