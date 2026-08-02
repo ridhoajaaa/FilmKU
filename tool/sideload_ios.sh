@@ -1,4 +1,11 @@
 #!/usr/bin/env bash
+# ⚠️ DEPRECATED (2026-08): AltServer-Linux v0.0.5's bundled ldid crashes on
+# modern Mach-O binaries (`ldid.cpp(1391): _assert(): end >= size - 0x10`),
+# so this script no longer completes an install on 2026 Apple auth.
+# → Use tool/resign_ios.sh instead: it drives the Sideloader CLI
+#   (tool/ios-sideloader/sideloader, built from source) which signs +
+#   installs correctly. Kept here for reference only.
+#
 # sideload_ios.sh — install the FilmKU IPA on your iPhone for FREE using a
 # personal Apple ID (no $99 Developer account, no Mac, Linux host).
 #
@@ -13,7 +20,14 @@
 #   this script does not use it.)
 #
 # Usage:
-#   ./tool/sideload_ios.sh <filmku-unsigned.ipa> <APPLE_ID> [APP_SPECIFIC_PASSWORD]
+#   ./tool/sideload_ios.sh <filmku-unsigned.ipa> <APPLE_ID> [APP_SPECIFIC_PASSWORD] [2FA_CODE]
+#
+#   - [2FA_CODE]        optional. If your Apple ID has two-factor auth (2FA)
+#                       enabled, Apple sends a 6-digit code to your trusted
+#                       device/phone. AltServer asks "Enter two factor code"
+#                       — pass it here (or type it when prompted) to finish
+#                       the signing. On the 7-day re-sign, re-run with a fresh
+#                       code.
 #
 #   - <ipa>             path to the IPA file to install. The GitHub Actions
 #                       artifact "filmku-ios-unsigned" downloads as a WRAPPER
@@ -53,12 +67,13 @@ UPLOADED_UDID="${UPLOADED_UDID:-}"
 die() { echo "ERROR: $*" >&2; exit 1; }
 
 if [[ $# -lt 2 ]]; then
-  echo "Usage: $0 <filmku-unsigned.ipa> <APPLE_ID> [APP_SPECIFIC_PASSWORD]" >&2
+  echo "Usage: $0 <filmku-unsigned.ipa> <APPLE_ID> [APP_SPECIFIC_PASSWORD] [2FA_CODE]" >&2
   exit 1
 fi
 IPA="$1"
 APPLE_ID="$2"
 PASSWORD="${3:-}"
+TFA_CODE="${4:-}"
 
 [[ -f "$ALTSERVER" ]] || die "AltServer binary not found at $ALTSERVER (download it from https://github.com/NyaMisty/AltServer-Linux/releases)"
 [[ -f "$IPA" ]] || die "IPA not found: $IPA (download the 'filmku-ios-unsigned' artifact from GitHub Actions first)"
@@ -78,7 +93,13 @@ fi
 echo "=== 2. Sign + install via AltServer-Linux (talks to Apple directly) ==="
 echo "This fetches a free dev certificate for your Apple ID, signs FilmKU,"
 echo "and installs it. Takes 1-3 minutes."
-"$ALTSERVER" -u "$UDID" -a "$APPLE_ID" -p "$PASSWORD" "$IPA"
+# If a 2FA code was supplied, feed it to AltServer's "Enter two factor code"
+# prompt via stdin (it reads the code from stdin, not an argument).
+if [[ -n "$TFA_CODE" ]]; then
+  printf '%s\n' "$TFA_CODE" | "$ALTSERVER" -u "$UDID" -a "$APPLE_ID" -p "$PASSWORD" "$IPA"
+else
+  "$ALTSERVER" -u "$UDID" -a "$APPLE_ID" -p "$PASSWORD" "$IPA"
+fi
 
 echo
 echo "=== 3. Verify install ==="

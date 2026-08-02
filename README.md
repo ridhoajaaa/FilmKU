@@ -119,12 +119,31 @@ Mac and without the $99/year Apple Developer fee:**
    | **AltStore** | Windows/Mac (AltServer) | Auto-refreshes signatures over Wi-Fi before expiry. |
    | **SideStore** | PC once, then on-device | Refreshes entirely on-device after initial setup. |
    | **TrollStore** | iOS 14.0–16.6.1 / 17.0 only | **Permanent** install — no 7-day re-sign. Requires a PC tool once. |
-   | **Linux-only path** | `zsign` + `ideviceinstaller` | Advanced: re-sign with a `.p12`+`.mobileprovision` from a free Apple ID, then `ideviceinstaller -i signed.ipa`. |
+   | **Sideloader (Linux, this repo)** | Linux + USB, vendored binary | `./tool/resign_ios.sh FilmKU-unsigned.ipa you@icloud.com` — built from source, local anisette (no dead third-party servers), reuses your cert on re-sign. |
 
 3. **The 7-day reality** — free-Apple-ID apps expire after 7 days. Sideloadly
    users re-push the IPA weekly; AltStore/SideStore auto-refresh before
    expiry. The $99 fee only buys permanent signing / App Store / TestFlight —
    nothing in the free path needs it.
+4. **Re-sign after 7 days (Linux, one command)** — this repo ships a
+   prebuilt Sideloader CLI (`tool/ios-sideloader/sideloader`, built from
+   source because the official release crashes on 2026 Apple auth — see
+   `tool/ios-sideloader/BUILD.md`) plus a wrapper script:
+
+   ```bash
+   ./tool/resign_ios.sh ~/Downloads/FilmKU-unsigned.ipa you@icloud.com
+   ```
+
+   It **reuses the certificate** Sideloader created on the first install
+   (matched by public key, no revoke needed), re-provisions and reinstalls.
+   First time only: enable **Developer Mode** on the iPhone (Settings →
+   Privacy & Security → Developer Mode → ON → restart) — required once for
+   sideloaded apps on iOS 16+.
+
+   > 🔐 **Security:** if your Apple ID password was ever shared in a chat,
+   > change it at appleid.apple.com and use an **App-Specific Password** for
+   > future re-signs (appleid.apple.com → Sign-In & Security →
+   > App-Specific Passwords).
 
 > ℹ️ No iPhone at all? The same workflow can target the **simulator** by
 > changing `--no-codesign` to `--simulator` — but there is no iOS simulator
@@ -361,6 +380,30 @@ flutter doctor   # Android toolchain should be green
 ---
 
 ## 📝 Changelog
+
+### `2026-08-02` — iOS sideload tooling: Sideloader binary + `resign_ios.sh`
+
+First-ever **successful free-Apple-ID install of FilmKU on a real iPhone**
+(no Mac, no $99/year account, Linux host):
+
+- **Root cause found**: both AltServer-Linux v0.0.5 (bundled ldid from 2022
+  crashes on modern Mach-O — `ldid.cpp _assert: end >= size - 0x10`) and the
+  official **Sideloader `1.0-pre4` release** (Sep 2024; crashes silently right
+  after 2FA on 2026 Apple auth) fail on current Apple servers.
+- **Fix**: built [Dadoum/Sideloader](https://github.com/Dadoum/Sideloader)
+  from source (`main`, checked 2026-07-31) with **LDC 1.34.0** (newer LDC
+  fails with `objc_opt_isKindOfClass` — CI uses 1.34.0), a `libxml2.so.2`
+  soname shim (CachyOS ships `.so.16`), and the exact CI recipe
+  (`dub build -b release-debug --compiler=ldc2 --arch x86_64-linux-gnu
+  :cli-frontend`). Result vendored (stripped 45MB → 5.8MB) at
+  `tool/ios-sideloader/sideloader` + `tool/ios-sideloader/BUILD.md`.
+- **New `tool/resign_ios.sh`** — one-command re-sign/install via the
+  vendored binary (tmux-driven, handles 2FA, reuses the existing cert so the
+  **7-day expiry** is a one-liner to refresh; see iOS section step 4).
+- `tool/sideload_ios.sh` marked **DEPRECATED** (AltServer ldid path broken);
+  `AltServerData/` (leftover `.p12` certs) added to `.gitignore`.
+- Verified end-to-end: `DeveloperSession created` → cert issued → IPA signed
+  → `100/100 InstallComplete` → `com.filmku.filmku` confirmed on device.
 
 ### `2026-08-02` — auto-handoff WebView→mpv, cap-2 capture, blank-white fix, early-abort CDN, iOS deps
 
