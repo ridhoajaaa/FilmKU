@@ -1,0 +1,44 @@
+# CI gate — flutter analyze + flutter test MUST pass before merge.
+#
+# Runs on every push to main and every pull request. Add this as a required
+# status check in GitHub → Settings → Branches → Branch protection rules so a
+# PR cannot merge while the checks are red.
+#
+# This workflow is deliberately separate from build-ios.yml (which is the slow
+# artifact build on macOS); the gate is fast (ubuntu, cached Flutter) and is
+# the thing reviewers see on every PR.
+name: CI (analyze + test)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: analyze + test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Resolve dependencies
+        run: flutter pub get
+
+      - name: Format check
+        run: dart format --set-exit-if-changed lib test
+
+      - name: Analyze
+        run: flutter analyze
+
+      - name: Test
+        run: flutter test

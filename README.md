@@ -56,15 +56,17 @@ See [docs.flutter.dev](https://docs.flutter.dev/get-started/install).
 
 ### 3. Provide the API key
 
-A working default key is already embedded in `lib/core/constants/app_constants.dart`,
-so `flutter run` works out of the box. To use your own key:
+There is **deliberately no default key embedded** in the app — you must
+provide your own (keeps the key out of the public binary/repo). Two ways:
 
 ```bash
 flutter run --dart-define=TMDB_API_KEY=your_key_here
 ```
 
-Or enter it in the app: **Settings → TMDB API Key** (stored locally in Hive,
-takes precedence over the build-time key).
+or enter it in the app: **Settings → TMDB API Key** (stored locally in Hive,
+takes precedence over the build-time key, no rebuild needed). Without a key
+the app shows a clear "add your key in Settings" error instead of loading
+movies.
 
 ### 4. Generate platform folders (if missing)
 
@@ -184,11 +186,12 @@ Diagnostics: every step logs `FILMKU_EXTRACT_*`, `FILMKU_AUTOCAPTURE_*`,
    - `vidsrc.to`, `2embed.cc`, `vidsrc.su`, `vidlink.pro`
      (cineby pruned 2026-08 — its embed redirects to a `bulsis.net` scam
      affiliate page)
-   - (toggle each in **Settings → Video Sources**; see the
-     [Changelog](#-changelog) for current source health — as of 2026-08 the
-     2Embed domains (`2embed.cc`/`2embed.skin`) are alive, but only VidLink
-     is confirmed producing a playable NATIVE stream; 2Embed.skin is
-     best-effort for native and reliable via the WebView fallback)
+   - (toggle each in **Settings → Video Sources**; **current source health is
+     data-driven** — `tool/source_health.json` holds each provider's verdict,
+     `lastChecked` and notes, refreshed by
+     `TMDB_API_KEY=xxx ./tool/probe_providers.sh` (reads the key from the
+     environment — never hardcoded), so the README no longer carries
+     hand-edited health notes per release)
 2. **Direct scan** — fetch the embed HTML with Dio and regex for `.m3u8`/`.mp4`
    (follows one level of iframes, incl. `data-src` iframes).
 3. **Headless extraction** — if nothing is found, a headless
@@ -250,6 +253,11 @@ flutter analyze
 dart format --set-exit-if-changed lib test
 flutter test
 ```
+
+A **CI gate** (`.github/workflows/ci.yml`) runs exactly these three on every
+push to `main` and every pull request (ubuntu runner, cached Flutter).
+Enable it as a required status check under GitHub → **Settings → Branches →
+Branch protection rules** so a PR cannot merge while red.
 
 ## 🛠️ Android Build Notes (Troubleshooting)
 
@@ -380,6 +388,33 @@ flutter doctor   # Android toolchain should be green
 ---
 
 ## 📝 Changelog
+
+### `2026-08-02` — engineering hardening: resign retry (rate-limit), bump_version.sh, CI gate, no default TMDB key, data-driven source health
+
+- **`tool/resign_ios.sh` retries transient Apple rate-limits.** Live installs
+  hit an intermittent `ssl connect failed` right after login (DeveloperSession
+  OK, then the certificate-generation request dies — a flaky provisioning
+  endpoint, not a script bug; a retry a minute later succeeds). The whole
+  Sideloader run now loops up to `$MAX_ATTEMPTS` (default 3) with doubling
+  backoff, so a flaky Apple answer no longer fails the install. Tunables:
+  `FILMKU_RESIGN_MAX_ATTEMPTS`, `FILMKU_RESIGN_BACKOFF`.
+- **New `tool/bump_version.sh`** — bumps the version in BOTH places that must
+  stay in sync: `version:` in `pubspec.yaml` and `AppConstants.appVersion`.
+  `--major` / `--minor` / `--patch` / `--build` (default `--build`); a version
+  bump resets the `+N` build number to `1`. Run it before every release so the
+  installed version is always identifiable (Settings → About).
+- **CI gate** — new `.github/workflows/ci.yml` runs `dart format --set-exit-if-changed`,
+  `flutter analyze` and `flutter test` on every push to `main` and every PR.
+  Make it a required status check in GitHub branch protection so a PR cannot
+  merge while red.
+- **No default TMDB API key.** The embedded default key is removed from
+  `lib/core/constants/app_constants.dart` — you must provide your own key
+  (build-time `--dart-define` or runtime Settings, stored in Hive). Keeps the
+  key out of the public binary and repo. README updated.
+- **Data-driven source health.** New `tool/source_health.json` holds each
+  provider's verdict / `lastChecked` / notes; `tool/probe_providers.sh`
+  rewrites it on every run. The README's Stream Source Pipeline now points at
+  the file instead of carrying hand-edited health notes per release.
 
 ### `2026-08-02` — iOS v1.1.0: mpv direct-play (no WebView detour), real liquid glass v2, swipe-dismiss fullscreen, resign fix
 

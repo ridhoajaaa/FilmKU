@@ -1,0 +1,41 @@
+{
+  "updated": "2026-08-02",
+  "caveat": "Desktop headless-chromium probe results. On-device behavior can differ (anti-bot/fingerprinting), so NEVER prune a provider on desktop DEAD alone — confirm via logcat (FILMKU_AUTOCAPTURE trace) before removing. Re-run: TMDB_API_KEY=xxx ./tool/probe_providers.sh (the key is read from the environment, never hardcoded).",
+  "providers": {
+    "vidlink": {
+      "label": "VidLink",
+      "verdict": "ALIVE",
+      "nativePlayable": true,
+      "lastChecked": "2026-08-01",
+      "notes": "The only source currently confirmed producing a playable NATIVE stream (signed .mp4 exposed after JS/WASM decrypt). Relies on headless/intercept extraction."
+    },
+    "two_embed_skin": {
+      "label": "2Embed.skin",
+      "verdict": "ALIVE",
+      "nativePlayable": false,
+      "lastChecked": "2026-08-01",
+      "notes": "Revived 2Embed ecosystem: embed page returns HTTP 200 with the correct title. Its /swish player is JS-rendered and did not expose a plain URL in headless probing — reliable via the WebView fallback, best-effort for native."
+    },
+    "two_embed": {
+      "label": "2Embed.cc",
+      "verdict": "WEBVIEW-ONLY",
+      "nativePlayable": false,
+      "lastChecked": "2026-08-01",
+      "notes": "Legacy domain; serves about:blank in some regions (white screen — the WebView auto-failovers). Works via WebView in regions where it renders."
+    },
+    "vidsrc_to": {
+      "label": "VidSrc.to",
+      "verdict": "DEAD",
+      "nativePlayable": false,
+      "lastChecked": "2026-08-01",
+      "notes": "Redirects through vsembed.ru; CDN refused on the user's ISP (ERR_CONNECTION_REFUSED on tokenized hosts). Kept as a toggle — verify on-device before pruning."
+    },
+    "vidsrc_su": {
+      "label": "VidSrc.su",
+      "verdict": "DEAD",
+      "nativePlayable": false,
+      "lastChecked": "2026-08-01",
+      "notes": "Serves an empty shell page. Kept as a toggle — verify on-device before pruning."
+    }
+  }
+}

@@ -10,14 +10,15 @@ class AppConstants {
   /// they have installed).
   static const String appVersion = '1.1.0';
 
-  /// TMDB API key. A working default is embedded so the app runs out of the
-  /// box; override it at build time via:
-  /// `flutter run --dart-define=TMDB_API_KEY=your_key_here`
-  /// or at runtime from Settings (stored in Hive, takes precedence).
-  static const String tmdbApiKey = String.fromEnvironment(
-    'TMDB_API_KEY',
-    defaultValue: '497ddd1299fb3f83808649bbafa48d06',
-  );
+  /// TMDB API key. There is deliberately NO embedded default — you must
+  /// provide your own key, either:
+  ///   (a) at build time: `flutter run --dart-define=TMDB_API_KEY=your_key`
+  ///   (b) at runtime: Settings → TMDB API Key (stored in Hive, takes
+  ///       precedence, works without a rebuild).
+  /// Without a key the movie metadata will not load — the app shows a clear
+  /// "add your key in Settings" error instead of silently failing.
+  static const String tmdbApiKey =
+      String.fromEnvironment('TMDB_API_KEY', defaultValue: '');
 
   static const String defaultUserAgent =
       'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 '
