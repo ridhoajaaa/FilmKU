@@ -70,16 +70,18 @@ class AppShell extends StatelessWidget {
               icon: Icon(Icons.home_outlined),
               activeIcon: Icon(Icons.home_rounded),
               label: 'Home',
-              glowColor: Color(0xFF4DE1FF),
+              glowColor: Color(0x33FFFFFF),
             ),
             GlassTab(
               icon: Icon(Icons.search_rounded),
               label: 'Search',
             ),
+            // Label + icons UNIFIED with Android (bookmark/Watchlist) so the
+            // two platforms read the same (2026-08 user request).
             GlassTab(
-              icon: Icon(Icons.favorite_outline_rounded),
-              activeIcon: Icon(Icons.favorite_rounded),
-              label: 'Favorite',
+              icon: Icon(Icons.bookmark_outline_rounded),
+              activeIcon: Icon(Icons.bookmark_rounded),
+              label: 'Watchlist',
             ),
             GlassTab(
               icon: Icon(Icons.settings_outlined),
@@ -92,14 +94,14 @@ class AppShell extends StatelessWidget {
             index,
             initialLocation: index == navigationShell.currentIndex,
           ),
-          // FilmKU aqua accent for the active indicator/icon (matches the
-          // iOS theme's accent color) so the bar reads as part of the app.
+          // Neutral graphite accent (NOT the old aqua blue) — matches the
+          // iOS theme's neutral accent so the bar reads as part of the app.
           // NOTE: glowColor is per-GlassTab (not a GlassTabBar.bottom param) —
-          // the per-tab glow is configured on the GlassTab entries below.
-          selectedIconColor: const Color(0xFF4DE1FF),
+          // the per-tab glow is configured on the GlassTab entries above.
+          selectedIconColor: const Color(0xFFE8E8EA),
           selectedLabelColor: Colors.white,
           unselectedLabelColor: Colors.white54,
-          indicatorColor: const Color(0x334DE1FF),
+          indicatorColor: const Color(0x26E8E8EA),
         ),
       );
     }

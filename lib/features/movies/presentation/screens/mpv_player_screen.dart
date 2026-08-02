@@ -16,6 +16,7 @@ class MpvPlayerArgs {
     required this.title,
     required this.sourceLabel,
     this.startAt = Duration.zero,
+    this.httpHeaders = const <String, String>{},
   });
 
   /// Direct `.m3u8`/`.mp4` URL captured from inside the WebView fallback.
@@ -29,6 +30,17 @@ class MpvPlayerArgs {
 
   /// Where the WebView playback was, to resume from.
   final Duration startAt;
+
+  /// Extra HTTP headers sent on every request to the stream CDN (mpv's
+  /// `http-header-fields`).
+  ///
+  /// 2026-08 iOS root cause: the signed 2embed/vidlink CDN URLs return 403
+  /// to a header-less request — mpv opened `Media(url)` with NO headers, so
+  /// on iOS (where the extraction/CDN chain differs from Android) playback
+  /// never started and the screen failed with "Native playback failed".
+  /// Passing the embed page as `Referer` (+ `Origin` + the app User-Agent)
+  /// makes the CDN accept the stream on BOTH platforms.
+  final Map<String, String> httpHeaders;
 }
 
 /// Native player backed by libmpv (`media_kit`).
@@ -178,7 +190,13 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
     _silentFreezeConsecutive = 0;
     _errorGraceTimer?.cancel();
     try {
-      await _player.open(Media(widget.args.url), play: true);
+      await _player.open(
+        Media(
+          widget.args.url,
+          httpHeaders: widget.args.httpHeaders,
+        ),
+        play: true,
+      );
       if (widget.args.startAt > Duration.zero) {
         await _player.seek(widget.args.startAt);
       }

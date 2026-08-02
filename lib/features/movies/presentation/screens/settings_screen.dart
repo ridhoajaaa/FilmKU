@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 
 import '../../../../core/constants/app_constants.dart';
 import '../../../../core/local/settings_service.dart';
@@ -67,28 +68,45 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final apiKey =
         settings.apiKey.isNotEmpty ? settings.apiKey : AppConstants.tmdbApiKey;
 
+    final isIos = Theme.of(context).platform == TargetPlatform.iOS;
     return Scaffold(
       appBar: AppBar(title: const Text('Settings')),
       body: ListView(
         // iOS: clear the floating glass capsule so the last tile is never
         // hidden behind it (extendBody content scrolls under the bar).
         padding: EdgeInsets.only(
-          bottom: Theme.of(context).platform == TargetPlatform.iOS ? 110 : 0,
+          bottom: isIos ? 110 : 0,
         ),
         children: [
           const _SectionTitle('TMDB API'),
-          ListTile(
-            leading: const Icon(Icons.key, color: AppColors.accent),
-            title: const Text('API Key'),
-            subtitle: Text(
-              apiKey.isEmpty
-                  ? 'Not set — movies will not load'
-                  : '•••••••••••• (tap to edit)',
-              style: const TextStyle(color: AppColors.textMuted, fontSize: 13),
+          // iOS: REAL liquid-glass row (shader-based GlassListTile).
+          // Android: classic Material ListTile.
+          if (isIos)
+            GlassListTile(
+              leading: const Icon(Icons.key, color: Colors.white70),
+              title: const Text('API Key'),
+              subtitle: Text(
+                apiKey.isEmpty
+                    ? 'Not set — movies will not load'
+                    : '•••••••••••• (tap to edit)',
+              ),
+              trailing: const Icon(Icons.edit, size: 20),
+              onTap: () => _editApiKey(settings.apiKey),
+            )
+          else
+            ListTile(
+              leading: const Icon(Icons.key, color: AppColors.accent),
+              title: const Text('API Key'),
+              subtitle: Text(
+                apiKey.isEmpty
+                    ? 'Not set — movies will not load'
+                    : '•••••••••••• (tap to edit)',
+                style:
+                    const TextStyle(color: AppColors.textMuted, fontSize: 13),
+              ),
+              trailing: const Icon(Icons.edit, size: 20),
+              onTap: () => _editApiKey(settings.apiKey),
             ),
-            trailing: const Icon(Icons.edit, size: 20),
-            onTap: () => _editApiKey(settings.apiKey),
-          ),
           const Divider(height: 24),
           const _SectionTitle('Stream Extraction'),
           SwitchListTile(
@@ -142,18 +160,31 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ),
           const Divider(height: 24),
           const _SectionTitle('About'),
+          // iOS: REAL liquid-glass row (shader-based GlassListTile).
+          // Android: classic Material ListTile.
+          //
           // `AppConstants.appVersion` is a const, so the interpolated string
           // is const-foldable — the whole tile stays const (analyzer keeps
           // prefer_const_constructors happy).
-          const ListTile(
-            leading: Icon(Icons.movie_filter, color: AppColors.accent),
-            title: Text('FilmKU'),
-            subtitle: Text(
-              'Version ${AppConstants.appVersion}\nStream movies. Zero ads.\n'
-              'Only stream content you are legally entitled to.',
-              style: TextStyle(color: AppColors.textMuted, fontSize: 12),
+          if (isIos)
+            const GlassListTile(
+              leading: Icon(Icons.movie_filter, color: Colors.white70),
+              title: Text('FilmKU'),
+              subtitle: Text(
+                'Version ${AppConstants.appVersion}\nStream movies. Zero ads.\n'
+                'Only stream content you are legally entitled to.',
+              ),
+            )
+          else
+            const ListTile(
+              leading: Icon(Icons.movie_filter, color: AppColors.accent),
+              title: Text('FilmKU'),
+              subtitle: Text(
+                'Version ${AppConstants.appVersion}\nStream movies. Zero ads.\n'
+                'Only stream content you are legally entitled to.',
+                style: TextStyle(color: AppColors.textMuted, fontSize: 12),
+              ),
             ),
-          ),
           const SizedBox(height: 32),
         ],
       ),
@@ -168,15 +199,20 @@ class _SectionTitle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // NOTE: not const — the color depends on the runtime platform (iOS gets
+    // the neutral light-gray accent, Android keeps the brand red).
+    final color = Theme.of(context).platform == TargetPlatform.iOS
+        ? const Color(0xFF9E9EA8)
+        : AppColors.accent;
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
       child: Text(
         title,
-        style: const TextStyle(
+        style: TextStyle(
           fontSize: 13,
           fontWeight: FontWeight.w700,
           letterSpacing: 1.1,
-          color: AppColors.accent,
+          color: color,
         ),
       ),
     );

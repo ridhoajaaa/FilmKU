@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 
 import '../../../../core/theme/app_colors.dart';
 import '../providers/watchlist_provider.dart';
@@ -44,6 +45,33 @@ class _EmptyWatchlist extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // iOS: REAL liquid-glass card (shader-based). Others: plain centered copy.
+    if (Theme.of(context).platform == TargetPlatform.iOS) {
+      return const Center(
+        child: GlassContainer(
+          padding: EdgeInsets.symmetric(horizontal: 32, vertical: 28),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.bookmark_border, size: 56, color: Colors.white38),
+              SizedBox(height: 12),
+              Text(
+                'Your watchlist is empty',
+                style: TextStyle(
+                  fontSize: 16,
+                  color: Colors.white70,
+                ),
+              ),
+              SizedBox(height: 4),
+              Text(
+                'Tap the bookmark icon on any movie to save it here.',
+                style: TextStyle(fontSize: 13, color: Colors.white38),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
     return const Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,

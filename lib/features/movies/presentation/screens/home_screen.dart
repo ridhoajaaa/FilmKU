@@ -1,8 +1,7 @@
-import 'dart:ui' show ImageFilter;
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 
 import '../../../../core/constants/app_constants.dart';
 import '../../../../core/theme/app_colors.dart';
@@ -99,46 +98,37 @@ class _HeaderBanner extends StatelessWidget {
   const _HeaderBanner();
   @override
   Widget build(BuildContext context) {
-    // iOS: liquid-glass header (blurred chip). Others: classic solid banner.
+    // iOS: REAL liquid-glass header (shader-based GlassContainer — replaces
+    // the old hand-rolled BackdropFilter approximation). Others: classic
+    // solid banner.
     if (Theme.of(context).platform == TargetPlatform.iOS) {
-      return Padding(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 10),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(22),
-          child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              decoration: BoxDecoration(
-                color: const Color(0x14141424),
-                borderRadius: BorderRadius.circular(22),
-                border: Border.all(color: const Color(0x28FFFFFF)),
+      return const Padding(
+        padding: EdgeInsets.fromLTRB(16, 12, 16, 10),
+        child: GlassContainer(
+          padding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          child: Row(
+            children: [
+              Icon(Icons.movie_filter, color: Color(0xFFE8E8EA), size: 26),
+              SizedBox(width: 10),
+              Text(
+                'FilmKU',
+                style: TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.w800,
+                  color: Colors.white,
+                  letterSpacing: -0.4,
+                ),
               ),
-              child: const Row(
-                children: [
-                  Icon(Icons.movie_filter, color: Color(0xFF4DE1FF), size: 26),
-                  SizedBox(width: 10),
-                  Text(
-                    'FilmKU',
-                    style: TextStyle(
-                      fontSize: 24,
-                      fontWeight: FontWeight.w800,
-                      color: Colors.white,
-                      letterSpacing: -0.4,
-                    ),
-                  ),
-                  Spacer(),
-                  Text(
-                    'No Ads • No Popups',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: Colors.white54,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                ],
+              Spacer(),
+              Text(
+                'No Ads • No Popups',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Colors.white54,
+                  fontWeight: FontWeight.w500,
+                ),
               ),
-            ),
+            ],
           ),
         ),
       );

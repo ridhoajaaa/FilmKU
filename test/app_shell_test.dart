@@ -79,15 +79,16 @@ void main() {
     await withPlatform(TargetPlatform.iOS, () async {
       await pumpShell(tester);
 
-      // iOS tab labels (Instagram-style): Home, Search, Favorite, Settings.
+      // iOS tab labels are UNIFIED with Android: Home, Search, Watchlist,
+      // Settings (2026-08 user request — no more platform drift).
       // GlassTabBar renders each label twice (selected + unselected variants)
       // so use findsWidgets, not findsOneWidget.
       expect(find.text('Home'), findsWidgets);
       expect(find.text('Search'), findsWidgets);
-      expect(find.text('Favorite'), findsWidgets);
+      expect(find.text('Watchlist'), findsWidgets);
       expect(find.text('Settings'), findsWidgets);
-      // The Android label must NOT leak into the iOS bar.
-      expect(find.text('Watchlist'), findsNothing);
+      // The old iOS-only label must be gone.
+      expect(find.text('Favorite'), findsNothing);
       // The classic Material bar must not be present.
       expect(find.byType(BottomNavigationBar), findsNothing);
       // The REAL liquid-glass tab bar (shader-based, iOS 26) floats above.

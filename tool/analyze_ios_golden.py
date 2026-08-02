@@ -17,12 +17,17 @@ Checks (logical geometry from the widget-test math):
   - bg   = mean brightness of the pure-background margin (x 0-16, y 640-740)
   - cap  = mean brightness of the capsule band (y 762-834, x 24-366: 72px
            tall, 10px safe-area margin, 24px side padding)
-  - aqua = count of #4DE1FF-ish accent pixels in the capsule band
+  - light = count of bright (>150 RGB) pixels in the capsule band — the iOS
+           accent is now NEUTRAL light gray (#E8E8EA), not the old aqua
+           (#4DE1FF), so the "active pill/icon rendered" check counts bright
+           pixels instead of blue-ish ones (2026-08 accent change).
   1. content strip above the capsule (y 700-740, x 24-366) is > 1.5x bg
      (the home list really renders there)
   2. capsule band is brighter than the content strip (a visible glass bar)
-  3. capsule band has >= 30 aqua pixels (active pill/icon rendered)
-  4. the same band on the Android golden has <= 20 aqua (shells differ)
+  3. capsule band has >= 1000 light pixels (glass bar + active pill/icon
+     rendered — the frosted capsule is the brightest surface on screen)
+  4. the same band on the Android golden has far fewer light pixels
+     (Android keeps the classic dark bar — shells differ)
 
 Exit 0 = PASS, 1 = FAIL. Dev tool, not a CI gate.
 Regenerate goldens first: flutter test --update-goldens test/ios_ui_golden_test.dart
@@ -54,21 +59,24 @@ def mean_brightness(img, y0, y1, x0=None, x1=None):
     return (total / n) if n else 0.0
 
 
-def count_aqua_light(img, y0, y1, x0=None, x1=None):
-    """Returns (aqua_accent_px, light_px) in the region."""
+def count_light(img, y0, y1, x0=None, x1=None):
+    """Returns the count of bright (>150 RGB) pixels in the region.
+
+    The iOS accent is now a neutral light gray (#E8E8EA), so "the active
+    pill/icon rendered" is proven by bright pixels, not blue-ish ones (the
+    old aqua #4DE1FF check was removed in 2026-08 when the accent changed).
+    """
     w, h = img.size
     px = img.load()
     x0, x1 = int(x0 or 0), int(x1 or w)
     y0, y1 = int(y0), min(int(y1), h)
-    aqua = light = 0
+    light = 0
     for y in range(y0, y1):
         for x in range(x0, x1):
             r, g, b = px[x, y]
-            if b > 180 and g > 150 and r < 160 and (b - r) > 60:
-                aqua += 1
-            elif r > 150 and g > 150 and b > 150:
+            if r > 150 and g > 150 and b > 150:
                 light += 1
-    return aqua, light
+    return light
 
 
 def main():
@@ -92,14 +100,14 @@ def main():
 
     ios_content = mean_brightness(ios, content_top, content_bot, cap_x0, cap_x1)
     ios_cap = mean_brightness(ios, cap_top, cap_bot, cap_x0, cap_x1)
-    ios_aqua, ios_light = count_aqua_light(ios, cap_top, cap_bot, cap_x0, cap_x1)
-    andr_aqua, _ = count_aqua_light(andr, cap_top, cap_bot, cap_x0, cap_x1)
+    ios_light = count_light(ios, cap_top, cap_bot, cap_x0, cap_x1)
+    andr_light = count_light(andr, cap_top, cap_bot, cap_x0, cap_x1)
 
     print(f'  background margin mean:                 {bg:.2f}')
     print(f'  content strip above capsule mean:       {ios_content:.2f}')
     print(f'  capsule band mean:                      {ios_cap:.2f}')
-    print(f'  capsule band aqua px: {ios_aqua}   light px: {ios_light}')
-    print(f'  Android same band aqua px: {andr_aqua}')
+    print(f'  capsule band light px: {ios_light}')
+    print(f'  Android same band light px: {andr_light}')
 
     ok = True
     if ios_content <= bg * 1.5:
@@ -110,13 +118,14 @@ def main():
         print(f'  FAIL: capsule band ({ios_cap:.2f}) not brighter than content '
               f'above ({ios_content:.2f}) — glass bar may not be drawn')
         ok = False
-    if ios_aqua < 30:
-        print(f'  FAIL: iOS capsule band has too few aqua pixels ({ios_aqua}) '
-              f'— active pill/icon may not render')
+    if ios_light < 1000:
+        print(f'  FAIL: iOS capsule band has too few light pixels ({ios_light}) '
+              f'— glass bar / active pill/icon may not render')
         ok = False
-    if andr_aqua > 20:
-        print(f'  FAIL: Android classic shell unexpectedly has aqua '
-              f'({andr_aqua} px) — the shells should differ')
+    if andr_light > ios_light:
+        print(f'  FAIL: Android classic shell band ({andr_light} light px) is '
+              f'brighter than the iOS glass band ({ios_light}) — the shells '
+              f'should differ')
         ok = False
     if ok:
         print('PASS: liquid-glass capsule renders over content and differs '

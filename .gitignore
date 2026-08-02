@@ -55,3 +55,6 @@ app.*.map.json
 node_modules/
 package.json
 package-lock.json
+
+# Downloaded unsigned IPA artifacts (install_latest_ios.sh keeps them in /tmp)
+*.ipa

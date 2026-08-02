@@ -365,6 +365,19 @@ class _WebViewPlayerScreenState extends State<WebViewPlayerScreen> {
           forMainFrameOnly: false,
         ),
       );
+      // Same play-nudge as the hidden auto-capture: some embed players sit
+      // behind a play-button overlay or refuse autoplay without a gesture —
+      // programmatically clicking play affordances + calling video.play()
+      // makes the player actually start on iOS (where the page would
+      // otherwise stay on cover + spinner forever). Shared script from
+      // stream_capture_core.dart.
+      await controller.addUserScript(
+        userScript: UserScript(
+          source: embedAutoPlayNudgeScript,
+          injectionTime: UserScriptInjectionTime.AT_DOCUMENT_START,
+          forMainFrameOnly: false,
+        ),
+      );
       debugPrint('FILMKU_WEBVIEW_USERSCRIPT_ADDED');
     } catch (e) {
       debugPrint('FILMKU_WEBVIEW_USERSCRIPT_ERROR $e');

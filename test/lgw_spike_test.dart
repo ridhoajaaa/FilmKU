@@ -39,4 +39,50 @@ void main() {
     expect(find.text('Settings'), findsWidgets);
     expect(find.byType(GlassTabBar), findsOneWidget);
   });
+
+  testWidgets(
+      'SPIKE: GlassContainer/GlassTextField/GlassListTile render on Skia',
+      (tester) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          backgroundColor: Colors.black,
+          body: SingleChildScrollView(
+            child: Column(
+              children: [
+                // GlassContainer with padding — the base surface used across
+                // the iOS screens (header banner, detail sections).
+                GlassContainer(
+                  padding: EdgeInsets.all(16),
+                  child:
+                      Text('Container', style: TextStyle(color: Colors.white)),
+                ),
+                SizedBox(height: 8),
+                // GlassTextField — the iOS search bar surface.
+                GlassTextField(
+                  placeholder: 'Search movies…',
+                ),
+                SizedBox(height: 8),
+                // GlassListTile — the iOS Settings row surface.
+                GlassListTile(
+                  leading: Icon(Icons.key),
+                  title: Text('API Key'),
+                  trailing: Icon(Icons.edit, size: 20),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    expect(find.byType(GlassContainer), findsOneWidget);
+    expect(find.byType(GlassTextField), findsOneWidget);
+    expect(find.byType(GlassListTile), findsOneWidget);
+    expect(find.text('Container'), findsOneWidget);
+    expect(find.text('Search movies…'), findsOneWidget);
+    expect(find.text('API Key'), findsOneWidget);
+  });
 }

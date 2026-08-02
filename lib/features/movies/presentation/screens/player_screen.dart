@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../../core/constants/app_constants.dart';
 import '../../../../core/local/settings_service.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../data/datasources/stream_source_datasource.dart';
@@ -105,6 +106,29 @@ class PlayerScreen extends ConsumerStatefulWidget {
   ) {
     if (candidates.length <= max) return candidates;
     return candidates.sublist(0, max);
+  }
+
+  /// Builds the HTTP headers mpv should send to the stream CDN.
+  ///
+  /// 2026-08 iOS root cause: the signed 2embed/vidlink CDN URLs reject
+  /// header-less requests (403), so mpv's `Media(url)` never started on iOS
+  /// and the screen failed with "Native playback failed". Passing the embed
+  /// page as `Referer` (+ `Origin` + the app's mobile User-Agent, mirroring
+  /// what the in-app WebView sends) makes the CDN accept the stream on both
+  /// platforms. Exposed for tests.
+  @visibleForTesting
+  static Map<String, String> buildStreamHeaders(String? embedUrl) {
+    final headers = <String, String>{
+      'User-Agent': AppConstants.defaultUserAgent,
+    };
+    if (embedUrl != null && embedUrl.isNotEmpty) {
+      headers['Referer'] = embedUrl;
+      final uri = Uri.tryParse(embedUrl);
+      if (uri != null && uri.hasAuthority && uri.scheme.isNotEmpty) {
+        headers['Origin'] = '${uri.scheme}://${uri.authority}';
+      }
+    }
+    return headers;
   }
 
   @override
@@ -327,6 +351,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
         title: _movieTitle(),
         sourceLabel: source.label,
         startAt: stream.position,
+        httpHeaders: PlayerScreen.buildStreamHeaders(source.embedUrl),
       ),
     );
     if (!mounted) return;

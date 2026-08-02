@@ -2,6 +2,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 
 import '../../../../core/constants/api_constants.dart';
 import '../../../../core/theme/app_colors.dart';
@@ -108,71 +109,25 @@ class _DetailContent extends ConsumerWidget {
         SliverToBoxAdapter(
           child: Padding(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _TitleBlock(details: details),
-                const SizedBox(height: 14),
-                _ActionRow(
-                  isSaved: isSaved,
-                  onPlay: onPlay,
-                  onToggleWatchlist: onToggleWatchlist,
-                ),
-                if ((details.genres).isNotEmpty) ...[
-                  const SizedBox(height: 18),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: details.genres
-                        .map((genre) => Chip(
-                              label: Text(genre),
-                              backgroundColor: AppColors.surfaceLight,
-                              side: BorderSide.none,
-                              labelStyle: const TextStyle(
-                                color: AppColors.textSecondary,
-                                fontSize: 12,
-                              ),
-                            ))
-                        .toList(),
-                  ),
-                ],
-                if (details.tagline != null && details.tagline!.isNotEmpty) ...[
-                  const SizedBox(height: 18),
-                  Text(
-                    details.tagline!,
-                    style: const TextStyle(
-                      fontSize: 15,
-                      fontStyle: FontStyle.italic,
-                      color: AppColors.textSecondary,
+            // iOS: REAL liquid-glass info panel (shader-based GlassContainer)
+            // under the backdrop — replaces the flat background. Android:
+            // classic flat layout.
+            child: Theme.of(context).platform == TargetPlatform.iOS
+                ? GlassContainer(
+                    padding: const EdgeInsets.fromLTRB(16, 18, 16, 20),
+                    child: _InfoColumn(
+                      details: details,
+                      isSaved: isSaved,
+                      onPlay: onPlay,
+                      onToggleWatchlist: onToggleWatchlist,
                     ),
+                  )
+                : _InfoColumn(
+                    details: details,
+                    isSaved: isSaved,
+                    onPlay: onPlay,
+                    onToggleWatchlist: onToggleWatchlist,
                   ),
-                ],
-                const SizedBox(height: 18),
-                Text(
-                  movie.overview.isEmpty
-                      ? 'No synopsis available.'
-                      : movie.overview,
-                  style: const TextStyle(
-                    fontSize: 14.5,
-                    height: 1.5,
-                    color: AppColors.textSecondary,
-                  ),
-                ),
-                if (details.cast.isNotEmpty) ...[
-                  const SizedBox(height: 24),
-                  const Text(
-                    'Top Cast',
-                    style: TextStyle(
-                      fontSize: 19,
-                      fontWeight: FontWeight.w700,
-                      color: AppColors.textPrimary,
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  _CastRow(cast: details.cast),
-                ],
-              ],
-            ),
           ),
         ),
         SliverToBoxAdapter(
@@ -183,6 +138,91 @@ class _DetailContent extends ConsumerWidget {
           ),
         ),
         const SliverToBoxAdapter(child: SizedBox(height: 24)),
+      ],
+    );
+  }
+}
+
+/// The scrollable info column under the backdrop: title, actions, genres,
+/// tagline, overview, and cast. Shared by the iOS glass panel and the classic
+/// flat layout.
+class _InfoColumn extends StatelessWidget {
+  const _InfoColumn({
+    required this.details,
+    required this.isSaved,
+    required this.onPlay,
+    required this.onToggleWatchlist,
+  });
+
+  final MovieDetails details;
+  final bool isSaved;
+  final VoidCallback onPlay;
+  final VoidCallback onToggleWatchlist;
+
+  @override
+  Widget build(BuildContext context) {
+    final movie = details.movie;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _TitleBlock(details: details),
+        const SizedBox(height: 14),
+        _ActionRow(
+          isSaved: isSaved,
+          onPlay: onPlay,
+          onToggleWatchlist: onToggleWatchlist,
+        ),
+        if ((details.genres).isNotEmpty) ...[
+          const SizedBox(height: 18),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: details.genres
+                .map((genre) => Chip(
+                      label: Text(genre),
+                      backgroundColor: AppColors.surfaceLight,
+                      side: BorderSide.none,
+                      labelStyle: const TextStyle(
+                        color: AppColors.textSecondary,
+                        fontSize: 12,
+                      ),
+                    ))
+                .toList(),
+          ),
+        ],
+        if (details.tagline != null && details.tagline!.isNotEmpty) ...[
+          const SizedBox(height: 18),
+          Text(
+            details.tagline!,
+            style: const TextStyle(
+              fontSize: 15,
+              fontStyle: FontStyle.italic,
+              color: AppColors.textSecondary,
+            ),
+          ),
+        ],
+        const SizedBox(height: 18),
+        Text(
+          movie.overview.isEmpty ? 'No synopsis available.' : movie.overview,
+          style: const TextStyle(
+            fontSize: 14.5,
+            height: 1.5,
+            color: AppColors.textSecondary,
+          ),
+        ),
+        if (details.cast.isNotEmpty) ...[
+          const SizedBox(height: 24),
+          const Text(
+            'Top Cast',
+            style: TextStyle(
+              fontSize: 19,
+              fontWeight: FontWeight.w700,
+              color: AppColors.textPrimary,
+            ),
+          ),
+          const SizedBox(height: 12),
+          _CastRow(cast: details.cast),
+        ],
       ],
     );
   }

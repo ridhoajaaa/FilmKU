@@ -68,17 +68,20 @@ class AppTheme {
   /// iOS-only "liquid glass" theme.
   ///
   /// A distinct, translucent glass aesthetic for iOS (the Android build keeps
-  /// [dark]). Deep indigo-black base with vivid aqua/blue accents, frosted
-  /// surfaces (low-alpha whites), hairline glass borders and extra-large
-  /// corner radii — the Material 3 tokens are tuned so the shared widgets
-  /// (cards, chips, app bars, dialogs) read as frosted glass without any
-  /// per-widget platform checks.
+  /// [dark]). Neutral graphite-black base with a light neutral-gray accent
+  /// (2026-08: replaced the old electric-aqua/violet accent — the user
+  /// requested dark-gray/neutral tones, not blue), frosted surfaces
+  /// (low-alpha whites), hairline glass borders and extra-large corner radii
+  /// — the Material 3 tokens are tuned so the shared widgets (cards, chips,
+  /// app bars, dialogs) read as frosted glass without any per-widget platform
+  /// checks.
   static ThemeData get ios {
-    // Liquid-glass palette: deep space base + aqua accent + frosted whites.
-    const Color glassBase = Color(0xFF08080F);
-    const Color glassSurface = Color(0xFF16162A);
-    const Color accent = Color(0xFF4DE1FF); // electric aqua
-    const Color accentSecondary = Color(0xFF7C6BFF); // violet
+    // Liquid-glass palette: neutral space base + light neutral accent +
+    // frosted whites (no blue — user requested dark gray/neutral).
+    const Color glassBase = Color(0xFF0A0A0C);
+    const Color glassSurface = Color(0xFF161618);
+    const Color accent = Color(0xFFE8E8EA); // neutral light gray
+    const Color accentSecondary = Color(0xFF9E9EA8); // neutral mid gray
 
     final base = ThemeData(
       brightness: Brightness.dark,
@@ -89,10 +92,10 @@ class AppTheme {
         surface: glassSurface,
         onSurface: Colors.white,
         surfaceContainerLowest: glassBase,
-        surfaceContainerLow: Color(0xFF101022),
+        surfaceContainerLow: Color(0xFF101013),
         surfaceContainer: glassSurface,
-        surfaceContainerHigh: Color(0xFF1E1E38),
-        surfaceContainerHighest: Color(0xFF262647),
+        surfaceContainerHigh: Color(0xFF1E1E21),
+        surfaceContainerHighest: Color(0xFF26262A),
         outline: Color(0x33FFFFFF),
       ),
       scaffoldBackgroundColor: glassBase,
@@ -120,7 +123,7 @@ class AppTheme {
         displayColor: Colors.white,
       ),
       snackBarTheme: const SnackBarThemeData(
-        backgroundColor: Color(0xE6262647),
+        backgroundColor: Color(0xE626262A),
         contentTextStyle: TextStyle(color: Colors.white),
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(
@@ -190,7 +193,7 @@ class AppTheme {
       // version (const_with_non_const inside const contexts) — always use
       // BorderRadius.all(Radius.circular(...)) in const contexts instead.
       dialogTheme: const DialogThemeData(
-        backgroundColor: Color(0xF2141428),
+        backgroundColor: Color(0xF218181A),
         surfaceTintColor: Colors.transparent,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.all(Radius.circular(28)),
@@ -198,7 +201,7 @@ class AppTheme {
         ),
       ),
       bottomSheetTheme: const BottomSheetThemeData(
-        backgroundColor: Color(0xF2141428),
+        backgroundColor: Color(0xF218181A),
         surfaceTintColor: Colors.transparent,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(28)),

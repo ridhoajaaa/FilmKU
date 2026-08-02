@@ -389,6 +389,37 @@ flutter doctor   # Android toolchain should be green
 
 ## 📝 Changelog
 
+### `2026-08-02` — v1.2.1: iOS native playback fixed (CDN headers), real liquid glass on every screen, Watchlist tab unified, neutral (no-blue) iOS theme
+
+- **iOS playback root cause fixed: mpv now sends CDN HTTP headers.** The signed
+  2embed/vidlink stream URLs return `403` to a header-less request — mpv opened
+  `Media(url)` with NO `Referer`/`Origin`/`User-Agent`, so on iOS (where the
+  extraction/CDN chain differs from Android) playback never started and the
+  screen failed with "Native playback failed" → "Back to WebView", and even
+  the WebView stayed on cover + loading. New `PlayerScreen.buildStreamHeaders()`
+  builds `{User-Agent, Referer: embed page, Origin: scheme://authority}` and
+  `MpvPlayerScreen` passes them via `Media(url, httpHeaders: …)` — applies to
+  ALL playback paths (direct extraction, hidden auto-capture, WebView handoff).
+  Covered by `test/player_headers_test.dart`.
+- **Visible WebView now nudges play too.** The manual WebView fallback now
+  injects the same `embedAutoPlayNudgeScript` as the hidden capture (clicks
+  play affordances + calls `video.play()`), so iOS players that wait behind a
+  play-button overlay no longer stay stuck on cover + spinner forever.
+- **Real liquid glass on EVERY screen (not just the tab bar).** Home header
+  banner, Search field, Detail info panel, Watchlist empty state and Settings
+  rows now use the shader-based `GlassContainer` / `GlassTextField` /
+  `GlassListTile` from `liquid_glass_widgets` on iOS — replacing the old
+  hand-rolled BackdropFilter approximations. (Verified render-safe on Skia in
+  `test/lgw_spike_test.dart`.)
+- **Tab labels unified across platforms.** iOS tab 3 was "Favorite"; Android
+  was "Watchlist". Both are now **Watchlist** with bookmark icons — no more
+  platform drift.
+- **No more blue.** The iOS theme accent (`#4DE1FF` aqua / `#7C6BFF` violet) is
+  replaced with a neutral light-gray (`#E8E8EA`) / mid-gray (`#9E9EA8`) on a
+  graphite-black base — dark gray, not blue. Tab bar glow/indicator, header
+  icon and section titles follow. `tool/analyze_ios_golden.py` updated to
+  check neutral-light pixels instead of aqua.
+
 ### `2026-08-02` — engineering hardening: resign retry (rate-limit), bump_version.sh, CI gate, no default TMDB key, data-driven source health
 
 - **`tool/resign_ios.sh` retries transient Apple rate-limits.** Live installs
