@@ -116,6 +116,18 @@ class WebViewPlayerScreen extends StatefulWidget {
   @visibleForTesting
   static bool isMediaUrl(String url) => embedIsMediaUrl(url);
 
+  /// Whether the "Tap to play" overlay should be shown: the page has a
+  /// `<video>` that stays PAUSED (spinner-forever on iOS) and no native
+  /// stream has been captured yet, and the user hasn't already tapped once.
+  /// Exposed for tests.
+  @visibleForTesting
+  static bool shouldShowTapToPlay({
+    required int paused,
+    required bool hasNativeStream,
+    required bool tapAttempted,
+  }) =>
+      paused == 1 && !hasNativeStream && !tapAttempted;
+
   /// Consecutive probes (each ~2s apart) that must report a BLANK document
   /// before the screen gives up. Some sources (e.g. 2embed.cc in certain
   /// regions) serve `about:blank` — a white screen with no player, which the
@@ -166,11 +178,15 @@ class WebViewPlayerScreen extends StatefulWidget {
   /// guard `__filmkuA`):
   /// - removes ad overlay elements (class/id match) and ad-host iframes,
   /// - blocks `window.open` popups,
-  /// - relays the playing `<video>` URL + time to the top page via
-  ///   `postMessage({__filmku: {url, t}})` (MSE `blob:` URLs are skipped —
-  ///   they cannot play natively),
-  /// - the top frame stores the relayed value in `window.__filmku` for Dart
-  ///   polling.
+  /// - **autoplays any paused `<video>`** (best-effort; some embed players
+  ///   still wait for a real play tap — those surface a "Tap to play"
+  ///   overlay from the Dart side), fixing the 2026-08 iOS case where the
+  ///   video just spun (paused) forever in the WebView;
+  /// - relays the playing `<video>` URL + time (+ paused state) to the top
+  ///   page via `postMessage({__filmku: {url, t, paused}})` (MSE `blob:`
+  ///   URLs are skipped — they cannot play natively),
+  /// - the top frame stores the relayed value in `window.__filmku` and the
+  ///   paused flag in `window.__filmkuPaused` for Dart polling.
   static const String _allFramesJs = '(function(){'
       'if(window.__filmkuA)return;window.__filmkuA=true;'
       'var ADRE=/(^|[-_ ])(ad|ads|advert|banner|popup|popunder|overlay|sponsor)([-_ ]|\$)/i;'
@@ -196,34 +212,47 @@ class WebViewPlayerScreen extends StatefulWidget {
       'setInterval(function(){var a=document.querySelectorAll("div,iframe");'
       'for(var i=0;i<a.length;i++)kill(a[i]);},2500);'
       'try{window.open=function(){return null;};}catch(err){}'
+      // Best-effort autoplay: some embed players start paused and wait for a
+      // play tap; with mediaPlaybackRequiresUserGesture=false most will play
+      // on v.play(). Ones that still refuse surface the "Tap to play"
+      // overlay (Dart reads window.__filmkuPaused).
+      'function autoplay(){try{var v=document.querySelector("video");'
+      'if(v&&v.paused){var p=v.play();if(p&&p.catch)p.catch(function(){});}}catch(err){}}'
+      'autoplay();setInterval(autoplay,1800);'
       'function report(){try{var v=document.querySelector("video");'
-      'if(!v)return;var u=v.currentSrc||v.src||"";'
-      'if(!u||u.indexOf("blob:")===0)return;'
-      'window.parent.postMessage({__filmku:{url:u,t:v.currentTime||0}},"*");'
+      'if(!v)return;var u=v.currentSrc||v.src||"";var pz=v.paused?1:0;'
+      'if(!u||u.indexOf("blob:")===0){window.parent.postMessage({__filmkuPaused:pz},"*");return;}'
+      'window.parent.postMessage({__filmku:{url:u,t:v.currentTime||0,paused:pz}},"*");'
       '}catch(err){}}'
       'setInterval(report,1200);'
       'document.addEventListener("play",report,true);'
-      'if(window===window.top){window.__filmku=null;window.__filmkuAds=0;'
+      'if(window===window.top){window.__filmku=null;window.__filmkuAds=0;window.__filmkuPaused=0;'
       'window.addEventListener("message",function(ev){'
-      'var d=ev.data;if(d&&d.__filmku&&d.__filmku.url)window.__filmku=d.__filmku;'
+      'var d=ev.data;if(d&&d.__filmku&&d.__filmku.url){window.__filmku=d.__filmku;'
+      'window.__filmkuPaused=d.__filmku.paused?1:0;}'
+      'if(d&&d.__filmkuPaused)window.__filmkuPaused=d.__filmkuPaused;'
       'if(d&&d.__filmkuAd){window.__filmkuAds=(window.__filmkuAds||0)+1;}});}'
       '})();';
 
   /// Reads the relayed video (from any frame) or, as a fallback, a top-frame
-  /// `<video>` directly, plus the JS-side ad-strip counter. Returns
-  /// `JSON.stringify({url, t, ads, blank})` (url may be `''` when nothing
-  /// plays). `blank` is true when the top document is `about:blank` or has an
-  /// empty body — the white-screen signature of a dead/region-blocked source
-  /// (e.g. 2embed.cc) that can never produce a native-handoff stream.
+  /// `<video>` directly, plus the JS-side ad-strip counter and the paused
+  /// flag. Returns `JSON.stringify({url, t, ads, blank, paused})` (url may be
+  /// `''` when nothing plays; `paused` is 1 when a video exists but is
+  /// paused — the spinner-forever signature some embeds show on iOS until a
+  /// play tap lands, which drives the "Tap to play" overlay). `blank` is
+  /// true when the top document is `about:blank` or has an empty body — the
+  /// white-screen signature of a dead/region-blocked source (e.g. 2embed.cc)
+  /// that can never produce a native-handoff stream.
   static const String _probeVideoJs = '(function(){'
       'var a=window.__filmkuAds||0;'
+      'var pz=window.__filmkuPaused||0;'
       'var blank=(location.href==="about:blank")||(!document.body)||(document.body.childElementCount===0);'
-      'var f=window.__filmku;if(f&&f.url)return JSON.stringify({url:f.url,t:f.t||0,ads:a,blank:blank});'
+      'var f=window.__filmku;if(f&&f.url)return JSON.stringify({url:f.url,t:f.t||0,ads:a,blank:blank,paused:pz});'
       'var v=document.querySelector("video");'
       'if(v){var u=v.currentSrc||v.src||"";'
       'if(u&&u.indexOf("blob:")!==0&&u.indexOf("http")===0)'
-      'return JSON.stringify({url:u,t:v.currentTime||0,ads:a,blank:blank});}'
-      'return JSON.stringify({url:"",t:0,ads:a,blank:blank});'
+      'return JSON.stringify({url:u,t:v.currentTime||0,ads:a,blank:blank,paused:v.paused?1:0});}'
+      'return JSON.stringify({url:"",t:0,ads:a,blank:blank,paused:pz});'
       '})()';
 
   @override
@@ -274,6 +303,16 @@ class _WebViewPlayerScreenState extends State<WebViewPlayerScreen> {
   /// Guards against double-pop when a blank page is detected (probe timers
   /// fire again between the detection and the pop).
   bool _blankEscaped = false;
+
+  /// True when the page shows a `<video>` that stays PAUSED (spinner-forever
+  /// on iOS 2026-08): the injected JS autoplay attempt didn't work, so a
+  /// "Tap to play" overlay is offered. Tapping it plays the video via JS.
+  bool _needsTap = false;
+
+  /// True once the user tapped "Tap to play" — the overlay is not re-shown
+  /// for the same session (if the page still refuses, the user can tap the
+  /// source's own player controls directly).
+  bool _tapAttempted = false;
 
   @override
   void initState() {
@@ -397,6 +436,21 @@ class _WebViewPlayerScreenState extends State<WebViewPlayerScreen> {
           setState(() => _adBlocked = jsAds);
         }
       }
+      // A video exists but is paused (spinner-forever): the injected autoplay
+      // attempt failed (some embeds gate playback behind a real tap). Offer
+      // the "Tap to play" overlay so iOS users aren't stuck on a spinner.
+      final paused = decoded['paused'];
+      final showTap = WebViewPlayerScreen.shouldShowTapToPlay(
+        paused: paused is num ? paused.toInt() : 0,
+        hasNativeStream: _nativeStream != null,
+        tapAttempted: _tapAttempted,
+      );
+      if (showTap && !_needsTap && mounted) {
+        setState(() => _needsTap = true);
+      } else if (!showTap && _needsTap) {
+        setState(() => _needsTap = false);
+      }
+
       final url = decoded['url'];
       if (url is! String ||
           url.isEmpty ||
@@ -431,6 +485,28 @@ class _WebViewPlayerScreenState extends State<WebViewPlayerScreen> {
       'escape url=${widget.args.url}',
     );
     context.pop();
+  }
+
+  /// Plays the paused `<video>` via JS (the source's own player controls are
+  /// usually behind an overlay) and dismisses the "Tap to play" prompt.
+  Future<void> _tapToPlay() async {
+    if (!mounted) return;
+    setState(() {
+      _needsTap = false;
+      _tapAttempted = true;
+    });
+    final controller = _controller;
+    if (controller == null) return;
+    const js = '(function(){'
+        'var v=document.querySelector("video");'
+        'if(v){var p=v.play();if(p&&p.catch)p.catch(function(){});}'
+        'var b=document.querySelectorAll("button,.play,.vjs-big-play-button");'
+        'for(var i=0;i<b.length;i++){try{b[i].click();}catch(e){}}'
+        '})()';
+    try {
+      await controller.evaluateJavascript(source: js);
+    } catch (_) {}
+    debugPrint('FILMKU_WEBVIEW_TAP_TO_PLAY tapped url=${widget.args.url}');
   }
 
   /// Pops back to [PlayerScreen] with the discovered native stream so the
@@ -751,6 +827,50 @@ class _WebViewPlayerScreenState extends State<WebViewPlayerScreen> {
                     child: ErrorView(
                       message: _error!,
                       onRetry: () => _reload(),
+                    ),
+                  ),
+                // The page shows a paused <video> (spinner-forever on iOS) —
+                // offer a tap that plays it via JS, since the injected
+                // autoplay attempt is sometimes refused by the embed.
+                if (_needsTap && _error == null)
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    bottom: 48,
+                    child: Center(
+                      child: Material(
+                        color: AppColors.accent,
+                        borderRadius: BorderRadius.circular(28),
+                        elevation: 6,
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(28),
+                          onTap: _tapToPlay,
+                          child: const Padding(
+                            padding: EdgeInsets.symmetric(
+                              horizontal: 20,
+                              vertical: 12,
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  Icons.play_circle_fill,
+                                  color: Colors.black,
+                                  size: 22,
+                                ),
+                                SizedBox(width: 8),
+                                Text(
+                                  'Tap to play',
+                                  style: TextStyle(
+                                    color: Colors.black,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
                     ),
                   ),
                 // Auto-handoff countdown: playback is stable — switching to

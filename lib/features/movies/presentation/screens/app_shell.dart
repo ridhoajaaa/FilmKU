@@ -213,18 +213,25 @@ class _IosGlassTabBarState extends State<_IosGlassTabBar> {
                         ),
                       ),
                     ),
-                    Row(
-                      children: [
-                        for (var i = 0; i < _items.length; i++)
-                          Expanded(
-                            child: _GlassTabItem(
-                              icon: _items[i].icon,
-                              label: _items[i].label,
-                              selected: i == widget.currentIndex,
-                              onTap: () => widget.onTap(i),
+                    // Positioned.fill centers the tab row INSIDE the 72px
+                    // capsule. As a plain (non-positioned) Stack child the Row
+                    // aligned to the top-left, pushing Home/Search/Favorite/
+                    // Settings up toward the bubble's upper rim (user report,
+                    // 2026-08: icons nearly escaping the capsule).
+                    Positioned.fill(
+                      child: Row(
+                        children: [
+                          for (var i = 0; i < _items.length; i++)
+                            Expanded(
+                              child: _GlassTabItem(
+                                icon: _items[i].icon,
+                                label: _items[i].label,
+                                selected: i == widget.currentIndex,
+                                onTap: () => widget.onTap(i),
+                              ),
                             ),
-                          ),
-                      ],
+                        ],
+                      ),
                     ),
                   ],
                 ),
