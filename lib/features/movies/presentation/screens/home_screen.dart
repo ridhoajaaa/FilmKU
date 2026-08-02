@@ -2,9 +2,12 @@ import 'dart:ui' show ImageFilter;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
+import '../../../../core/constants/app_constants.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../providers/movie_providers.dart';
+import '../providers/settings_provider.dart';
 import '../widgets/error_view.dart';
 import '../widgets/hero_carousel.dart';
 import '../widgets/movie_list_row.dart';
@@ -14,6 +17,12 @@ class HomeScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    // Watch the settings provider so the "API key missing" banner disappears
+    // as soon as the user saves a key in Settings (Home stays alive in the
+    // indexedStack — a plain SettingsService read would never rebuild it).
+    final apiKeyFromSettings = ref.watch(settingsProvider).apiKey;
+    final hasApiKey =
+        apiKeyFromSettings.isNotEmpty || AppConstants.tmdbApiKey.isNotEmpty;
     final trending = ref.watch(trendingMoviesProvider);
     final popular = ref.watch(popularMoviesProvider);
     final topRated = ref.watch(topRatedMoviesProvider);
@@ -37,6 +46,16 @@ class HomeScreen extends ConsumerWidget {
                   Theme.of(context).platform == TargetPlatform.iOS ? 110 : 0,
             ),
             children: [
+              // Blocking setup banner: without a TMDB API key no movie loads
+              // at all. Give the user an unmissable, one-tap path to Settings
+              // (2026-08 user report: "API key missing and Settings can't be
+              // opened" — the tab bar was there, but the discovery path was
+              // not). Rebuilds via the watched settingsProvider, so it
+              // disappears the moment the key is saved.
+              if (!hasApiKey)
+                _ApiKeyBanner(
+                  onOpenSettings: () => context.go('/settings'),
+                ),
               const _HeaderBanner(),
               trending.when(
                 data: (movies) => HeroCarousel(movies: movies),
@@ -78,7 +97,6 @@ class HomeScreen extends ConsumerWidget {
 
 class _HeaderBanner extends StatelessWidget {
   const _HeaderBanner();
-
   @override
   Widget build(BuildContext context) {
     // iOS: liquid-glass header (blurred chip). Others: classic solid banner.
@@ -151,6 +169,76 @@ class _HeaderBanner extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// Unmissable setup banner shown at the very top of Home when no TMDB API key
+/// is configured. One tap jumps straight to the Settings tab where the key is
+/// entered — no hunting through tabs (2026-08 user report: "API key missing
+/// and Settings can't be opened").
+class _ApiKeyBanner extends StatelessWidget {
+  const _ApiKeyBanner({required this.onOpenSettings});
+
+  final VoidCallback onOpenSettings;
+
+  @override
+  Widget build(BuildContext context) {
+    final isIos = Theme.of(context).platform == TargetPlatform.iOS;
+    final content = Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      decoration: BoxDecoration(
+        // iOS: frosted glass chip; Android: solid accent-tinted card.
+        color: isIos ? const Color(0x1AFFB02E) : const Color(0xFF3A2E0A),
+        borderRadius: BorderRadius.circular(isIos ? 20 : 14),
+        border: Border.all(
+          color: isIos ? const Color(0x33FFB02E) : const Color(0x66FFB02E),
+        ),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.warning_amber_rounded, color: Color(0xFFFFB02E)),
+          const SizedBox(width: 12),
+          const Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'TMDB API Key missing',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 14,
+                  ),
+                ),
+                SizedBox(height: 2),
+                Text(
+                  'Add your key to load movies',
+                  style: TextStyle(color: Colors.white70, fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFFFFB02E),
+              foregroundColor: const Color(0xFF1A1200),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              textStyle: const TextStyle(
+                fontWeight: FontWeight.w800,
+                fontSize: 13,
+              ),
+            ),
+            onPressed: onOpenSettings,
+            child: const Text('Add key'),
+          ),
+        ],
+      ),
+    );
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+      child: content,
     );
   }
 }

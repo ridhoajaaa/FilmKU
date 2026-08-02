@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
+import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 
 import 'package:filmku/features/movies/presentation/screens/app_shell.dart';
 
@@ -79,16 +80,18 @@ void main() {
       await pumpShell(tester);
 
       // iOS tab labels (Instagram-style): Home, Search, Favorite, Settings.
-      expect(find.text('Home'), findsOneWidget);
-      expect(find.text('Search'), findsOneWidget);
-      expect(find.text('Favorite'), findsOneWidget);
-      expect(find.text('Settings'), findsOneWidget);
+      // GlassTabBar renders each label twice (selected + unselected variants)
+      // so use findsWidgets, not findsOneWidget.
+      expect(find.text('Home'), findsWidgets);
+      expect(find.text('Search'), findsWidgets);
+      expect(find.text('Favorite'), findsWidgets);
+      expect(find.text('Settings'), findsWidgets);
       // The Android label must NOT leak into the iOS bar.
       expect(find.text('Watchlist'), findsNothing);
       // The classic Material bar must not be present.
       expect(find.byType(BottomNavigationBar), findsNothing);
-      // A frosted BackdropFilter capsule floats above content.
-      expect(find.byType(BackdropFilter), findsWidgets);
+      // The REAL liquid-glass tab bar (shader-based, iOS 26) floats above.
+      expect(find.byType(GlassTabBar), findsOneWidget);
     });
   });
 
@@ -107,7 +110,7 @@ void main() {
     await withPlatform(TargetPlatform.iOS, () async {
       await pumpShell(tester);
 
-      await tester.tap(find.text('Search'));
+      await tester.tap(find.text('Search').first);
       await tester.pumpAndSettle();
       // The /search branch body rendered (the branch text appears on screen).
       expect(find.text('/search'), findsOneWidget);

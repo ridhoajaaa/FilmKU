@@ -63,6 +63,30 @@ class MpvPlayerScreen extends StatefulWidget {
   }) =>
       !sawPlaying && lastPosition <= Duration.zero;
 
+  /// Whether the periodic silent-freeze watchdog should surface a failure.
+  ///
+  /// Catches a stream that dies WITHOUT emitting any error event (e.g. the
+  /// CDN silently kills the connection mid-playback): playback state is still
+  /// `playing` but the RAW position has not changed since the last watchdog
+  /// tick.
+  ///
+  /// The comparison is STRICT EQUALITY on the raw position, not `<=`:
+  /// `currentPosition` is the raw current playback position which moves
+  /// BACKWARD on a user seek — a `<` result (30s vs the pre-seek 120s) proves
+  /// the stream responded, so it must NOT be flagged as a stall. Only an
+  /// exactly-unchanged position between two ticks (a real freeze) surfaces.
+  /// (The monotonic high-watermark [_lastPosition] is NOT used here — it
+  /// never decreases, so it would falsely stall after every rewind.)
+  /// Exposed for tests.
+  @visibleForTesting
+  static bool shouldSurfaceSilentFreeze({
+    required bool playing,
+    required bool sawPlaying,
+    required Duration currentPosition,
+    required Duration lastWatchPosition,
+  }) =>
+      playing && sawPlaying && currentPosition == lastWatchPosition;
+
   @override
   State<MpvPlayerScreen> createState() => _MpvPlayerScreenState();
 }
@@ -94,6 +118,27 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
   /// the user can retry / go back to the WebView instead of a frozen frame).
   static const Duration _errorGracePeriod = Duration(seconds: 4);
   Timer? _errorGraceTimer;
+
+  /// Silent-freeze watchdog period: while playback is supposedly running, if
+  /// the RAW position doesn't advance within this window the stream has
+  /// silently died (no error event — e.g. the CDN kills the connection).
+  /// Surfaces the failure so the user can retry / go back to the WebView
+  /// instead of staring at a frozen frame forever.
+  static const Duration _silentFreezePeriod = Duration(seconds: 20);
+  Timer? _silentFreezeWatchdog;
+
+  /// RAW current position (updates on EVERY position event, even backward
+  /// seeks) — what the silent-freeze watchdog compares across ticks.
+  Duration _currentPosition = Duration.zero;
+
+  /// Raw position at the last watchdog tick (see [shouldSurfaceSilentFreeze]).
+  Duration _lastWatchPosition = Duration.zero;
+
+  /// How many consecutive watchdog ticks showed no position change. A single
+  /// frozen tick can be a slow-network rebuffer (mpv keeps `playing` true
+  /// while rebuffering); only TWO consecutive frozen ticks ([_silentFreezePeriod]
+  /// × 2 = 40s of zero movement) surface the failure.
+  int _silentFreezeConsecutive = 0;
 
   @override
   void initState() {
@@ -128,6 +173,9 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
     // startup watchdog evaluate THIS run, not the previous (retry) one.
     _sawPlaying = false;
     _lastPosition = Duration.zero;
+    _currentPosition = Duration.zero;
+    _lastWatchPosition = Duration.zero;
+    _silentFreezeConsecutive = 0;
     _errorGraceTimer?.cancel();
     try {
       await _player.open(Media(widget.args.url), play: true);
@@ -143,6 +191,33 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
           debugPrint('FILMKU_MPV_STARTUP_TIMEOUT (no playback in 12s)');
           _markFailed('Stream did not start playing.');
         }
+      });
+      // Periodic progress watchdog: catches a stream that dies silently
+      // (no error event, but position stops advancing while still `playing`).
+      _silentFreezeWatchdog?.cancel();
+      _silentFreezeWatchdog = Timer.periodic(_silentFreezePeriod, (_) {
+        final frozen = mounted &&
+            !_failed &&
+            MpvPlayerScreen.shouldSurfaceSilentFreeze(
+              playing: _player.state.playing,
+              sawPlaying: _sawPlaying,
+              currentPosition: _currentPosition,
+              lastWatchPosition: _lastWatchPosition,
+            );
+        if (frozen) {
+          // Require TWO consecutive frozen ticks before surfacing: a single
+          // 20s window can be a slow-network rebuffer (mpv `playing` stays
+          // true while it rebuffers), not a dead stream.
+          _silentFreezeConsecutive++;
+          if (_silentFreezeConsecutive >= 2) {
+            debugPrint('FILMKU_MPV_SILENT_FREEZE '
+                '(no movement over ${_silentFreezePeriod.inSeconds * 2}s)');
+            _markFailed('Playback stalled (no progress).');
+          }
+        } else {
+          _silentFreezeConsecutive = 0;
+        }
+        _lastWatchPosition = _currentPosition;
       });
     } catch (e) {
       debugPrint('FILMKU_MPV_OPEN_ERROR $e');
@@ -216,6 +291,10 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
       }
     });
     _positionSub = _player.stream.position.listen((position) {
+      // RAW current position — updates on every event, including backward
+      // seeks, so the silent-freeze watchdog compares true progress (not a
+      // monotonic high-watermark that never decreases).
+      _currentPosition = position;
       if (position > _lastPosition) {
         _lastPosition = position;
         // Real progress while an error grace window is open ⇒ the error was
@@ -236,6 +315,7 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
   @override
   void dispose() {
     _startupWatchdog?.cancel();
+    _silentFreezeWatchdog?.cancel();
     _errorGraceTimer?.cancel();
     _errorSub?.cancel();
     _playingSub?.cancel();

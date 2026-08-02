@@ -1,7 +1,7 @@
 name: filmku
 description: "FilmKU — an ad-free movie streaming app. Dark, fast, and clean."
 publish_to: "none"
-version: 1.1.1+1
+version: 1.2.0+1
 
 environment:
   sdk: ">=3.3.0 <4.0.0"
@@ -37,6 +37,7 @@ dependencies:
   flutter_inappwebview: ^6.1.5
   # Material icons
   cupertino_icons: ^1.0.8
+  liquid_glass_widgets: ^0.28.1
 
 dev_dependencies:
   flutter_test:

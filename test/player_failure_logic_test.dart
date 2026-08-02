@@ -66,6 +66,73 @@ void main() {
     });
   });
 
+  group('MpvPlayerScreen.shouldSurfaceSilentFreeze', () {
+    test('surfaces failure when playing but position froze (silent CDN kill)',
+        () {
+      expect(
+        MpvPlayerScreen.shouldSurfaceSilentFreeze(
+          playing: true,
+          sawPlaying: true,
+          currentPosition: const Duration(seconds: 120),
+          lastWatchPosition: const Duration(seconds: 120),
+        ),
+        isTrue,
+      );
+    });
+
+    test('no surface when position keeps advancing', () {
+      expect(
+        MpvPlayerScreen.shouldSurfaceSilentFreeze(
+          playing: true,
+          sawPlaying: true,
+          currentPosition: const Duration(seconds: 150),
+          lastWatchPosition: const Duration(seconds: 120),
+        ),
+        isFalse,
+      );
+    });
+
+    test('no false stall after a backward seek (raw position, not watermark)',
+        () {
+      // User seeks back to rewatch a scene: raw position drops below the
+      // previous tick's value, but the watchdog compares RAW per-tick values
+      // so a still-playing stream must NOT be flagged as stalled.
+      expect(
+        MpvPlayerScreen.shouldSurfaceSilentFreeze(
+          playing: true,
+          sawPlaying: true,
+          currentPosition: const Duration(seconds: 30),
+          lastWatchPosition: const Duration(seconds: 120),
+        ),
+        isFalse,
+      );
+    });
+
+    test('no surface when user paused (playing=false)', () {
+      expect(
+        MpvPlayerScreen.shouldSurfaceSilentFreeze(
+          playing: false,
+          sawPlaying: true,
+          currentPosition: const Duration(seconds: 120),
+          lastWatchPosition: const Duration(seconds: 120),
+        ),
+        isFalse,
+      );
+    });
+
+    test('no surface before playback ever started', () {
+      expect(
+        MpvPlayerScreen.shouldSurfaceSilentFreeze(
+          playing: false,
+          sawPlaying: false,
+          currentPosition: Duration.zero,
+          lastWatchPosition: Duration.zero,
+        ),
+        isFalse,
+      );
+    });
+  });
+
   group('WebViewPlayerScreen.shouldShowTapToPlay', () {
     test('paused video + no native stream + not yet tapped => show', () {
       expect(

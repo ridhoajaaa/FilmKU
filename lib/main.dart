@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 import 'package:media_kit/media_kit.dart';
 
 import 'app.dart';
@@ -24,10 +25,24 @@ Future<void> main() async {
   // libmpv (media_kit) must be initialized before any Player is created.
   MediaKit.ensureInitialized();
 
+  // Pre-warm the iOS 26 Liquid Glass fragment shaders (the package's
+  // GlassTabBar / Glass widgets render on top of them). Safe no-op on
+  // platforms where the shaders are unavailable (Skia/web/test) — the
+  // package falls back to its adaptive rendering path.
+  try {
+    await LiquidGlassWidgets.initialize();
+  } catch (e, s) {
+    debugPrint('FILMKU_LIQUID_GLASS_INIT_FAILED $e\n$s');
+  }
+
   // Local storage must be ready before any provider reads it.
   await Hive.initFlutter();
   await SettingsService.init();
   await WatchlistService.init();
 
-  runApp(const ProviderScope(child: FilmKuApp()));
+  runApp(
+    LiquidGlassWidgets.wrap(
+      child: const ProviderScope(child: FilmKuApp()),
+    ),
+  );
 }
