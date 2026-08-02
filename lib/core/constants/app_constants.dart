@@ -5,6 +5,11 @@ class AppConstants {
   static const String appName = 'FilmKU';
   static const String tagline = 'Stream movies. Zero ads.';
 
+  /// App version shown in Settings → About. Keep in sync with `version:` in
+  /// pubspec.yaml (bump BOTH on every update so users can tell which build
+  /// they have installed).
+  static const String appVersion = '1.1.0';
+
   /// TMDB API key. A working default is embedded so the app runs out of the
   /// box; override it at build time via:
   /// `flutter run --dart-define=TMDB_API_KEY=your_key_here`

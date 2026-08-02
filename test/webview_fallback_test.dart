@@ -217,44 +217,6 @@ void main() {
     });
   });
 
-  group('PlayerScreen.buildStreamHeaders', () {
-    test('always includes a mobile User-Agent and Accept header', () {
-      final headers = PlayerScreen.buildStreamHeaders(
-        source('vidlink', embedUrl: 'https://vidlink.pro/m/1'),
-      );
-
-      expect(headers['User-Agent'], contains('Mozilla/5.0'));
-      expect(headers['User-Agent'], contains('Android'));
-      expect(headers['Accept'], '*/*');
-    });
-
-    test('derives Origin and Referer from the embedUrl', () {
-      final headers = PlayerScreen.buildStreamHeaders(
-        source('vidlink', embedUrl: 'https://vidlink.pro/movie/155'),
-      );
-
-      expect(headers['Origin'], 'https://vidlink.pro');
-      expect(headers['Referer'], 'https://vidlink.pro/movie/155');
-    });
-
-    test('omits Origin/Referer when the source has no embedUrl', () {
-      final headers = PlayerScreen.buildStreamHeaders(source('two_embed'));
-
-      expect(headers.containsKey('Origin'), isFalse);
-      expect(headers.containsKey('Referer'), isFalse);
-      expect(headers['User-Agent'], isNotNull);
-    });
-
-    test('omits Origin/Referer when the embedUrl is unparseable', () {
-      final headers = PlayerScreen.buildStreamHeaders(
-        source('bad', embedUrl: 'not a url'),
-      );
-
-      expect(headers.containsKey('Origin'), isFalse);
-      expect(headers.containsKey('Referer'), isFalse);
-    });
-  });
-
   group('WebViewPlayerScreen error surfacing (main-frame + URL match)', () {
     test('load error surfaces only for the main document at the original URL',
         () {

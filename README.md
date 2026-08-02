@@ -381,6 +381,56 @@ flutter doctor   # Android toolchain should be green
 
 ## 📝 Changelog
 
+### `2026-08-02` — iOS v1.1.0: mpv direct-play (no WebView detour), real liquid glass v2, swipe-dismiss fullscreen, resign fix
+
+**🎯 iOS stream flow fixed at the root ("finding stream → play webview" → "→ mvp").**
+On-device evidence: on iOS the extraction usually **succeeds** (unlike Android),
+then the old `_initPlayer` tried `video_player` (AVPlayer), which rejects these
+CDN streams (403/428 signed URLs) → error → "Play in WebView" detour every
+time. The only native player proven on both platforms is libmpv
+(`media_kit`), so **every direct extraction URL now plays straight in mpv**
+(`player_screen._initPlayer` → `/mpv-player`), exactly like the proven WebView
+handoff path. iOS is now identical to Android: `finding stream → mvp`. The
+`video_player`/`CustomVideoControls` UI path was removed (it never worked
+on-device for these sources). The **"Browser headers (experimental)"**
+setting is gone too — it only fed the deleted `video_player` path
+(`buildStreamHeaders`), so it had become a no-op; removed together with its
+4 tests. (If a future native engine ever needs custom headers again,
+`buildStreamHeaders` can be resurrected from git history.)
+
+- **Swipe-down to dismiss fullscreen** (iOS only) — new
+  `widgets/player_swipe_dismiss.dart` wraps the mpv + WebView players: drag
+  down past 140px (or fling down) exits fullscreen with the player translating
+  with the finger; release below threshold springs back. No more killing the
+  app from the background to leave fullscreen. Non-iOS platforms are a
+  pass-through (Android keeps the system back button). Honest caveat: over
+  the WebView's native platform view (WKWebView) the gesture may be consumed
+  by the web content itself — swipe-dismiss reliably fires on the overlay
+  button/chrome region; on the mpv player (pure Flutter) it works over the
+  whole surface.
+- **Real liquid glass v2** (`app_shell.dart`) — beyond the old simple blur:
+  - **Saturation boost** on the whole iOS shell body
+    (`ColorFiltered` saturation 1.3) so the frosted capsule picks up vivid,
+    saturated color from the content behind it — the iOS 26 liquid-glass look;
+  - **specular highlight that follows the touch** (radial white sheen at the
+    finger position via `Listener` + `_SpecularPainter`);
+  - **luminous edge glow** (outer white rim `BoxShadow`) + **top rim
+    highlight** line + brighter hairline border; active pill gets an aqua glow.
+- **`resign_ios.sh` buffering bug fixed** — it ran Sideloader through
+  `| tee log`, but Sideloader (D/std.stdio) **full-buffers** when stdout is a
+  pipe, so the `Apple ID:` prompt never reached the log and `wait_for()`
+  timed out (the reason the 2026-08-02 install had to be driven manually in
+  tmux). It now runs Sideloader directly in the tmux pane (pty → line
+  buffered) and polls `tmux capture-pane`; `remain-on-exit` keeps the pane
+  alive so the final `InstallComplete` marker is readable.
+- **Versioning convention:** version bumped to **1.1.0+2** (`pubspec.yaml` +
+  `AppConstants.appVersion` shown in Settings → About). From now on **every
+  update bumps the version** so you can always tell which build is installed
+  (check Settings → About, or the IPA's CFBundleShortVersionString).
+
+**Verification:** `flutter analyze` clean, full suite pass, iOS goldens
+regenerated (glass v2 changes the pixels), `tool/analyze_ios_golden.py` PASS.
+
 ### `2026-08-02` — iOS liquid-glass UI verified: golden tests + live-preview flag + capsule overflow fix
 
 Verifying the iOS UI on a Linux host (no simulator, iPhone not always

@@ -103,8 +103,7 @@ void main() {
     });
   });
 
-  testWidgets('iOS: tapping a tab switches the visible branch',
-      (tester) async {
+  testWidgets('iOS: tapping a tab switches the visible branch', (tester) async {
     await withPlatform(TargetPlatform.iOS, () async {
       await pumpShell(tester);
 

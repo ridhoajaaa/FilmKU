@@ -127,8 +127,7 @@ class AppTheme {
           borderRadius: BorderRadius.all(Radius.circular(20)),
         ),
       ),
-      progressIndicatorTheme:
-          const ProgressIndicatorThemeData(color: accent),
+      progressIndicatorTheme: const ProgressIndicatorThemeData(color: accent),
       dividerColor: const Color(0x1AFFFFFF),
       cardTheme: const CardThemeData(
         color: Color(0x14FFFFFF), // frosted white

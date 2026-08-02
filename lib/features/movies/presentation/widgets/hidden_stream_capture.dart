@@ -46,8 +46,22 @@ class HiddenStreamCapture extends StatefulWidget {
   static bool isStaticAssetUrl(String url) {
     final path = url.toLowerCase().split('?').first.split('#').first;
     const extensions = <String>[
-      '.js', '.css', '.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp',
-      '.ico', '.woff', '.woff2', '.ttf', '.json', '.xml', '.map', '.txt',
+      '.js',
+      '.css',
+      '.png',
+      '.jpg',
+      '.jpeg',
+      '.gif',
+      '.svg',
+      '.webp',
+      '.ico',
+      '.woff',
+      '.woff2',
+      '.ttf',
+      '.json',
+      '.xml',
+      '.map',
+      '.txt',
     ];
     return extensions.any(path.endsWith);
   }

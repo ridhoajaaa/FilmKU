@@ -101,8 +101,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
             left: 16,
             right: 16,
             top: 16,
-            bottom:
-                Theme.of(context).platform == TargetPlatform.iOS ? 110 : 16,
+            bottom: Theme.of(context).platform == TargetPlatform.iOS ? 110 : 16,
           ),
           gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: 3,

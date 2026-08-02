@@ -71,7 +71,8 @@ void main() {
     }
   }
 
-  testWidgets('iOS golden: liquid glass shell renders (390x844)', (tester) async {
+  testWidgets('iOS golden: liquid glass shell renders (390x844)',
+      (tester) async {
     await pumpShell(tester, ios: true);
     await expectLater(
       find.byType(Scaffold).first,

@@ -31,6 +31,13 @@
 # is never logged. Prefer an App-Specific Password (appleid.apple.com →
 # Sign-In & Security → App-Specific Passwords) so your real password is not
 # exposed.
+#
+# NOTE on the 2026-08-08 buffering fix: Sideloader is a D program whose
+# std.stdio FULL-BUFFERS when stdout is not a terminal. The previous version
+# piped its output through `| tee log` (stdout = a pipe), so the "Apple ID:"
+# prompt never flushed to the log and wait_for() timed out. It now runs
+# DIRECTLY in the tmux pane (stdout = a pty → line-buffered), and wait_for()
+# polls the pane via `tmux capture-pane` instead of the log.
 
 set -euo pipefail
 
@@ -74,19 +81,34 @@ echo "This talks to Apple directly and takes 1-3 minutes."
 
 tmux kill-session -t "$SESSION" 2>/dev/null || true
 rm -f "$LOG"
-tmux new-session -d -s "$SESSION" "cd '$ROOT' && '$SIDELOADER' install '$IPA' -i 2>&1 | tee '$LOG'"
+
+# Run Sideloader DIRECTLY in the tmux pane — NOT piped through `tee`. A D
+# program full-buffers on a pipe, so the interactive prompts would never
+# flush to the log and wait_for() below would time out. In a pty the output
+# is line-buffered and visible instantly. remain-on-exit keeps the pane alive
+# after Sideloader exits so the final "100/100 | InstallComplete" line is
+# still readable (with `tmux has-session` gone, wait_for's last-grep below
+# would otherwise miss the completion marker).
+tmux new-session -d -s "$SESSION" "cd '$ROOT' && '$SIDELOADER' install '$IPA' -i"
+tmux set-option -t "$SESSION" remain-on-exit on 2>/dev/null || true
+
+# pane_text — current visible pane contents (CR normalized, blank lines
+# stripped), also appended to $LOG for post-mortem debugging.
+pane_text() {
+  local text
+  text="$(tmux capture-pane -t "$SESSION" -p 2>/dev/null | tr '\r' '\n' | grep -v '^$')"
+  if [[ -n "$text" ]]; then
+    printf '%s\n' "$text" >> "$LOG"
+  fi
+  printf '%s' "$text"
+}
 
 # wait_for <pattern> <timeout_seconds> — returns 0 once the pattern appears in
-# the log (or the process exits with the pattern present), 1 on timeout.
+# the tmux PANE (not a log), 1 on timeout.
 wait_for() {
   local pattern="$1" timeout="$2" i=0
   while (( i < timeout )); do
-    if grep -qE "$pattern" "$LOG" 2>/dev/null; then return 0; fi
-    if ! tmux has-session -t "$SESSION" 2>/dev/null; then
-      # process exited early — check the log one last time
-      grep -qE "$pattern" "$LOG" 2>/dev/null && return 0
-      return 1
-    fi
+    if pane_text | grep -qE "$pattern"; then return 0; fi
     sleep 2
     i=$((i + 2))
   done
@@ -100,13 +122,13 @@ send() { tmux send-keys -t "$SESSION" -l "$1"; tmux send-keys -t "$SESSION" Ente
 # --- Apple ID + password ----------------------------------------------------
 wait_for 'Apple ID:' 90 || die "Timed out waiting for the Apple ID prompt (see $LOG)"
 send "$APPLE_ID"
-# getpass() writes the "Password:" prompt to /dev/tty (the tmux pane), NOT to
-# the tee'd log — so wait on a short fixed delay instead of a log pattern.
-sleep 2
+# getpass() prints the "Password:" prompt to /dev/tty (the tmux pane), so we
+# can now wait for it in the pane before typing.
+wait_for 'Password' 30 || die "Timed out waiting for the password prompt (see $LOG)"
 send "$PASSWORD"
 
 # --- 2FA ---------------------------------------------------------------------
-if wait_for 'code has been sent|please type it here' 60; then
+if wait_for 'code has been sent|please type it here|Enter the 6-digit' 60; then
   echo
   echo "Apple sent a 2FA code to your phone. It expires in ~1-2 minutes."
   if [[ -z "$TFA_CODE" ]]; then

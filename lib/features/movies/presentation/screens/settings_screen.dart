@@ -117,19 +117,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             onChanged: (value) =>
                 ref.read(settingsProvider.notifier).setFallbackWebview(value),
           ),
-          SwitchListTile(
-            secondary: const Icon(Icons.http, color: AppColors.accent),
-            title: const Text('Browser headers (experimental)'),
-            subtitle: const Text(
-              'Send Referer/Origin/User-Agent on native media requests. '
-              'Some CDNs (e.g. VidLink) reject bare ExoPlayer fetches — '
-              'try this if a source fails to play natively.',
-              style: TextStyle(color: AppColors.textMuted, fontSize: 12),
-            ),
-            value: settings.browserHeaders,
-            onChanged: (value) =>
-                ref.read(settingsProvider.notifier).setBrowserHeaders(value),
-          ),
           const Divider(height: 24),
           const _SectionTitle('Video Sources'),
           ...SourceAggregator.extractors.map(
@@ -155,11 +142,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ),
           const Divider(height: 24),
           const _SectionTitle('About'),
+          // `AppConstants.appVersion` is a const, so the interpolated string
+          // is const-foldable — the whole tile stays const (analyzer keeps
+          // prefer_const_constructors happy).
           const ListTile(
             leading: Icon(Icons.movie_filter, color: AppColors.accent),
             title: Text('FilmKU'),
             subtitle: Text(
-              'Version 1.0.0\nStream movies. Zero ads.\n'
+              'Version ${AppConstants.appVersion}\nStream movies. Zero ads.\n'
               'Only stream content you are legally entitled to.',
               style: TextStyle(color: AppColors.textMuted, fontSize: 12),
             ),

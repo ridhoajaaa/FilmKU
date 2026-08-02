@@ -9,6 +9,7 @@ import 'package:go_router/go_router.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/webview/capture_webview_settings.dart';
 import '../widgets/error_view.dart';
+import '../widgets/player_swipe_dismiss.dart';
 import '../widgets/stream_capture_core.dart';
 
 export '../widgets/stream_capture_core.dart' show WebViewNativeStream;
@@ -38,8 +39,8 @@ class WebViewPlayerArgs {
 /// WebView-based fallback player.
 ///
 /// Some sources (e.g. VidLink) only expose their stream inside a real browser
-/// context — the signed `.mp4` URL is unusable by the native `video_player`
-/// (ExoPlayer) because the CDN requires cookies / TLS fingerprint / session.
+/// context — the signed `.mp4` URL is unusable by the native player (libmpv,
+/// `media_kit`) because the CDN requires cookies / TLS fingerprint / session.
 /// Loading the embed page in an in-app WebView plays the source's own player,
 /// which already has that context.
 ///
@@ -457,9 +458,7 @@ class _WebViewPlayerScreenState extends State<WebViewPlayerScreen> {
     if (position <= Duration.zero) return;
     final previous = _lastProbePosition;
     _lastProbePosition = position;
-    if (_handoffPending ||
-        !widget.args.autoHandoff ||
-        _autoHandoffCancelled) {
+    if (_handoffPending || !widget.args.autoHandoff || _autoHandoffCancelled) {
       return;
     }
     _stableCount = WebViewPlayerScreen.advanceStableProbe(
@@ -520,314 +519,277 @@ class _WebViewPlayerScreenState extends State<WebViewPlayerScreen> {
       child: Scaffold(
         backgroundColor: Colors.black,
         body: SafeArea(
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              InAppWebView(
-                initialUrlRequest: URLRequest(url: WebUri(widget.args.url)),
-                // Interception (request/fetch/ajax) must be explicitly on for
-                // iOS — defaults are false there, on Android they default on.
-                // Shared builder keeps every capture WebView consistent.
-                initialSettings: buildCaptureWebViewSettings(),
-                onWebViewCreated: (controller) {
-                  _controller = controller;
-                  _injectAllFramesScript(controller);
-                  debugPrint(
-                    'FILMKU_WEBVIEW_OPEN source=${widget.args.sourceLabel} '
-                    'url=${widget.args.url}',
-                  );
-                },
-                // Main-frame navigations to ad landing pages (the "tap
-                // anywhere → ad" hijack) are cancelled before they start.
-                shouldOverrideUrlLoading: (controller, navigationAction) async {
-                  final target = navigationAction.request.url;
-                  if (target != null &&
-                      WebViewPlayerScreen.isAdHost(target.host)) {
-                    return NavigationActionPolicy.CANCEL;
-                  }
-                  return NavigationActionPolicy.ALLOW;
-                },
-                // Ad/tracker sub-resources are answered with an empty 204 so
-                // their scripts never reach the page. Plain .m3u8/.mp4 media
-                // loads (also from inside iframes) are captured for native
-                // handoff. Everything else loads normally (return null).
-                shouldInterceptRequest: (controller, request) async {
-                  final url = request.url.toString();
-                  final host = request.url.host;
-                  if (WebViewPlayerScreen.isAdHost(host)) {
-                    _adBlocked++;
+          // iOS: swipe down anywhere to leave fullscreen without killing the
+          // app from the background. Non-iOS platforms are a pass-through.
+          child: PlayerSwipeDismiss(
+            onDismiss: () => context.pop(),
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                InAppWebView(
+                  initialUrlRequest: URLRequest(url: WebUri(widget.args.url)),
+                  // Interception (request/fetch/ajax) must be explicitly on for
+                  // iOS — defaults are false there, on Android they default on.
+                  // Shared builder keeps every capture WebView consistent.
+                  initialSettings: buildCaptureWebViewSettings(),
+                  onWebViewCreated: (controller) {
+                    _controller = controller;
+                    _injectAllFramesScript(controller);
                     debugPrint(
-                      'FILMKU_WEBVIEW_ADBLOCK host=$host total=$_adBlocked',
+                      'FILMKU_WEBVIEW_OPEN source=${widget.args.sourceLabel} '
+                      'url=${widget.args.url}',
                     );
-                    // Throttle UI updates — ad requests can burst.
-                    if (mounted && (_adBlocked <= 2 || _adBlocked % 5 == 0)) {
-                      setState(() {});
+                  },
+                  // Main-frame navigations to ad landing pages (the "tap
+                  // anywhere → ad" hijack) are cancelled before they start.
+                  shouldOverrideUrlLoading:
+                      (controller, navigationAction) async {
+                    final target = navigationAction.request.url;
+                    if (target != null &&
+                        WebViewPlayerScreen.isAdHost(target.host)) {
+                      return NavigationActionPolicy.CANCEL;
                     }
-                    return WebResourceResponse(
-                      contentType: 'text/plain',
-                      contentEncoding: 'utf-8',
-                      statusCode: 204,
-                      reasonPhrase: 'Blocked by FilmKU',
-                      data: Uint8List(0),
-                    );
-                  }
-                  if (WebViewPlayerScreen.isMediaUrl(url)) {
-                    debugPrint('FILMKU_WEBVIEW_CAPTURE url=$url');
-                    _setNativeStream(
-                      url,
-                      Duration.zero,
-                      via: 'intercept',
-                    );
-                  }
-                  return null;
-                },
-                // fetch()/XHR media loads (e.g. a JS player fetching the HLS
-                // manifest). NOTE: on Android these JS-injection interceptors
-                // typically reach the top frame only — cross-origin iframe
-                // media (the 2embed case) is caught by the all-frames relay
-                // instead. Returning the request unchanged always continues
-                // it; we only observe.
-                shouldInterceptFetchRequest: (controller, fetchRequest) async {
-                  final url = fetchRequest.url.toString();
-                  if (WebViewPlayerScreen.isMediaUrl(url)) {
-                    debugPrint('FILMKU_WEBVIEW_CAPTURE fetch=$url');
-                    _setNativeStream(url, Duration.zero, via: 'fetch');
-                  }
-                  return fetchRequest;
-                },
-                shouldInterceptAjaxRequest: (controller, ajaxRequest) async {
-                  final url = ajaxRequest.url.toString();
-                  if (WebViewPlayerScreen.isMediaUrl(url)) {
-                    debugPrint('FILMKU_WEBVIEW_CAPTURE ajax=$url');
-                    _setNativeStream(url, Duration.zero, via: 'ajax');
-                  }
-                  return ajaxRequest;
-                },
-                onLoadStop: (controller, url) async {
-                  if (mounted) {
-                    setState(() {
-                      _loading = false;
-                      // A main document loaded: a network-level error fired
-                      // during the redirect chain is no longer valid — clear
-                      // it so the error UI never covers a working player.
-                      // HTTP status errors are the real final state and are
-                      // kept.
-                      if (!_httpError) _error = null;
-                    });
-                  }
-                  // Re-inject the script into the top frame (idempotent): on
-                  // devices where the document-start script was too late for
-                  // the initial load, this still arms the ad-strip + relay.
-                  try {
-                    await controller.evaluateJavascript(
-                      source: WebViewPlayerScreen._allFramesJs,
-                    );
-                  } catch (_) {}
-                },
-                // Ad/tracker sub-frame errors fire constantly on these pages.
-                // Surfacing them covers the playing video with a fake error —
-                // only a failure of the original embed document (main frame
-                // at the exact URL we were asked to load) may fail the
-                // player. This also prevents a hijacked ad frame's error from
-                // ever covering the still-playing video.
-                onReceivedError: (controller, request, error) {
-                  if (WebViewPlayerScreen.shouldSurfaceLoadError(
-                        isForMainFrame: request.isForMainFrame,
-                        requestUrl: request.url.toString(),
-                        expectedUrl: widget.args.url,
-                      ) &&
-                      mounted) {
-                    setState(() {
-                      _loading = false;
-                      _httpError = false;
-                      _error = 'Failed to load ${widget.args.sourceLabel}. '
-                          'Check your connection.';
-                    });
-                  }
-                },
-                onReceivedHttpError: (controller, request, response) {
-                  // Ad/tracker sub-requests often 404/403 — only fail when
-                  // the main document itself errors. After a redirect (e.g.
-                  // vidsrc.to → vsembed.ru) the URL won't match and the
-                  // source's own page (with its error UI) is shown instead.
-                  if (WebViewPlayerScreen.shouldSurfaceHttpError(
-                        isForMainFrame: request.isForMainFrame,
-                        requestUrl: request.url.toString(),
-                        expectedUrl: widget.args.url,
-                      ) &&
-                      mounted) {
-                    setState(() {
-                      _loading = false;
-                      _httpError = true;
-                      _error = '${widget.args.sourceLabel} returned '
-                          'HTTP ${response.statusCode}.';
-                    });
-                  }
-                },
-                // Block popup/popunder ad windows — they hijack taps and can't
-                // be dismissed. Returning false prevents window.open from
-                // creating a new window; the player itself runs in this page.
-                onCreateWindow: (controller, createWindowAction) async {
-                  return false;
-                },
-              ),
-              // Back + close — always accessible (immersive mode hides the
-              // system back affordances). Back first pops WebView history so
-              // the user can escape an ad page and return to the video.
-              Positioned(
-                top: 8,
-                left: 8,
-                child: Row(
-                  children: [
-                    _RoundIconButton(
-                      icon: Icons.arrow_back,
-                      tooltip: 'Back',
-                      onPressed: _goBack,
-                    ),
-                    const SizedBox(width: 8),
-                    _RoundIconButton(
-                      icon: Icons.close,
-                      tooltip: 'Close player',
-                      onPressed: () => context.pop(),
-                    ),
-                  ],
+                    return NavigationActionPolicy.ALLOW;
+                  },
+                  // Ad/tracker sub-resources are answered with an empty 204 so
+                  // their scripts never reach the page. Plain .m3u8/.mp4 media
+                  // loads (also from inside iframes) are captured for native
+                  // handoff. Everything else loads normally (return null).
+                  shouldInterceptRequest: (controller, request) async {
+                    final url = request.url.toString();
+                    final host = request.url.host;
+                    if (WebViewPlayerScreen.isAdHost(host)) {
+                      _adBlocked++;
+                      debugPrint(
+                        'FILMKU_WEBVIEW_ADBLOCK host=$host total=$_adBlocked',
+                      );
+                      // Throttle UI updates — ad requests can burst.
+                      if (mounted && (_adBlocked <= 2 || _adBlocked % 5 == 0)) {
+                        setState(() {});
+                      }
+                      return WebResourceResponse(
+                        contentType: 'text/plain',
+                        contentEncoding: 'utf-8',
+                        statusCode: 204,
+                        reasonPhrase: 'Blocked by FilmKU',
+                        data: Uint8List(0),
+                      );
+                    }
+                    if (WebViewPlayerScreen.isMediaUrl(url)) {
+                      debugPrint('FILMKU_WEBVIEW_CAPTURE url=$url');
+                      _setNativeStream(
+                        url,
+                        Duration.zero,
+                        via: 'intercept',
+                      );
+                    }
+                    return null;
+                  },
+                  // fetch()/XHR media loads (e.g. a JS player fetching the HLS
+                  // manifest). NOTE: on Android these JS-injection interceptors
+                  // typically reach the top frame only — cross-origin iframe
+                  // media (the 2embed case) is caught by the all-frames relay
+                  // instead. Returning the request unchanged always continues
+                  // it; we only observe.
+                  shouldInterceptFetchRequest:
+                      (controller, fetchRequest) async {
+                    final url = fetchRequest.url.toString();
+                    if (WebViewPlayerScreen.isMediaUrl(url)) {
+                      debugPrint('FILMKU_WEBVIEW_CAPTURE fetch=$url');
+                      _setNativeStream(url, Duration.zero, via: 'fetch');
+                    }
+                    return fetchRequest;
+                  },
+                  shouldInterceptAjaxRequest: (controller, ajaxRequest) async {
+                    final url = ajaxRequest.url.toString();
+                    if (WebViewPlayerScreen.isMediaUrl(url)) {
+                      debugPrint('FILMKU_WEBVIEW_CAPTURE ajax=$url');
+                      _setNativeStream(url, Duration.zero, via: 'ajax');
+                    }
+                    return ajaxRequest;
+                  },
+                  onLoadStop: (controller, url) async {
+                    if (mounted) {
+                      setState(() {
+                        _loading = false;
+                        // A main document loaded: a network-level error fired
+                        // during the redirect chain is no longer valid — clear
+                        // it so the error UI never covers a working player.
+                        // HTTP status errors are the real final state and are
+                        // kept.
+                        if (!_httpError) _error = null;
+                      });
+                    }
+                    // Re-inject the script into the top frame (idempotent): on
+                    // devices where the document-start script was too late for
+                    // the initial load, this still arms the ad-strip + relay.
+                    try {
+                      await controller.evaluateJavascript(
+                        source: WebViewPlayerScreen._allFramesJs,
+                      );
+                    } catch (_) {}
+                  },
+                  // Ad/tracker sub-frame errors fire constantly on these pages.
+                  // Surfacing them covers the playing video with a fake error —
+                  // only a failure of the original embed document (main frame
+                  // at the exact URL we were asked to load) may fail the
+                  // player. This also prevents a hijacked ad frame's error from
+                  // ever covering the still-playing video.
+                  onReceivedError: (controller, request, error) {
+                    if (WebViewPlayerScreen.shouldSurfaceLoadError(
+                          isForMainFrame: request.isForMainFrame,
+                          requestUrl: request.url.toString(),
+                          expectedUrl: widget.args.url,
+                        ) &&
+                        mounted) {
+                      setState(() {
+                        _loading = false;
+                        _httpError = false;
+                        _error = 'Failed to load ${widget.args.sourceLabel}. '
+                            'Check your connection.';
+                      });
+                    }
+                  },
+                  onReceivedHttpError: (controller, request, response) {
+                    // Ad/tracker sub-requests often 404/403 — only fail when
+                    // the main document itself errors. After a redirect (e.g.
+                    // vidsrc.to → vsembed.ru) the URL won't match and the
+                    // source's own page (with its error UI) is shown instead.
+                    if (WebViewPlayerScreen.shouldSurfaceHttpError(
+                          isForMainFrame: request.isForMainFrame,
+                          requestUrl: request.url.toString(),
+                          expectedUrl: widget.args.url,
+                        ) &&
+                        mounted) {
+                      setState(() {
+                        _loading = false;
+                        _httpError = true;
+                        _error = '${widget.args.sourceLabel} returned '
+                            'HTTP ${response.statusCode}.';
+                      });
+                    }
+                  },
+                  // Block popup/popunder ad windows — they hijack taps and can't
+                  // be dismissed. Returning false prevents window.open from
+                  // creating a new window; the player itself runs in this page.
+                  onCreateWindow: (controller, createWindowAction) async {
+                    return false;
+                  },
                 ),
-              ),
-              // Live proof the ad-block is working.
-              if (_adBlocked > 0)
+                // Back + close — always accessible (immersive mode hides the
+                // system back affordances). Back first pops WebView history so
+                // the user can escape an ad page and return to the video.
                 Positioned(
                   top: 8,
-                  right: 8,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 5,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.black54,
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Icon(
-                          Icons.shield,
-                          size: 13,
-                          color: AppColors.accent,
-                        ),
-                        const SizedBox(width: 5),
-                        Text(
-                          '$_adBlocked iklan diblokir',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 11,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              if (_loading)
-                const Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
+                  left: 8,
+                  child: Row(
                     children: [
-                      CircularProgressIndicator(color: AppColors.accent),
-                      SizedBox(height: 14),
-                      Text(
-                        'Loading player…',
-                        style: TextStyle(color: AppColors.textSecondary),
+                      _RoundIconButton(
+                        icon: Icons.arrow_back,
+                        tooltip: 'Back',
+                        onPressed: _goBack,
+                      ),
+                      const SizedBox(width: 8),
+                      _RoundIconButton(
+                        icon: Icons.close,
+                        tooltip: 'Close player',
+                        onPressed: () => context.pop(),
                       ),
                     ],
                   ),
                 ),
-              if (_error != null)
-                Center(
-                  child: ErrorView(
-                    message: _error!,
-                    onRetry: () => _reload(),
-                  ),
-                ),
-              // Auto-handoff countdown: playback is stable — switching to
-              // the ad-free native player in a few seconds unless cancelled.
-              if (_handoffPending)
-                Positioned(
-                  left: 0,
-                  right: 0,
-                  bottom: 48,
-                  child: Center(
-                    child: Material(
-                      color: Colors.black87,
-                      borderRadius: BorderRadius.circular(28),
-                      elevation: 6,
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 6,
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const Icon(
-                              Icons.bolt,
-                              color: AppColors.accent,
-                              size: 18,
+                // Live proof the ad-block is working.
+                if (_adBlocked > 0)
+                  Positioned(
+                    top: 8,
+                    right: 8,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 5,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.black54,
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(
+                            Icons.shield,
+                            size: 13,
+                            color: AppColors.accent,
+                          ),
+                          const SizedBox(width: 5),
+                          Text(
+                            '$_adBlocked iklan diblokir',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 11,
                             ),
-                            const SizedBox(width: 8),
-                            Text(
-                              'Pindah ke player native dalam '
-                              '$_countdownLeft s…',
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 13,
-                              ),
-                            ),
-                            TextButton(
-                              onPressed: _cancelAutoHandoff,
-                              child: const Text('Batal'),
-                            ),
-                          ],
-                        ),
+                          ),
+                        ],
                       ),
                     ),
                   ),
-                ),
-              // A direct stream URL was found inside the embed player — offer
-              // to continue in the ad-free native player at the same spot
-              // (hidden while the auto-handoff countdown is running).
-              if (_nativeStream != null && !_handoffPending)
-                Positioned(
-                  left: 0,
-                  right: 0,
-                  bottom: 48,
-                  child: Center(
-                    child: Material(
-                      color: AppColors.accent,
-                      borderRadius: BorderRadius.circular(28),
-                      elevation: 6,
-                      child: InkWell(
+                if (_loading)
+                  const Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        CircularProgressIndicator(color: AppColors.accent),
+                        SizedBox(height: 14),
+                        Text(
+                          'Loading player…',
+                          style: TextStyle(color: AppColors.textSecondary),
+                        ),
+                      ],
+                    ),
+                  ),
+                if (_error != null)
+                  Center(
+                    child: ErrorView(
+                      message: _error!,
+                      onRetry: () => _reload(),
+                    ),
+                  ),
+                // Auto-handoff countdown: playback is stable — switching to
+                // the ad-free native player in a few seconds unless cancelled.
+                if (_handoffPending)
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    bottom: 48,
+                    child: Center(
+                      child: Material(
+                        color: Colors.black87,
                         borderRadius: BorderRadius.circular(28),
-                        onTap: _handOffToNative,
-                        child: const Padding(
-                          padding: EdgeInsets.symmetric(
-                            horizontal: 20,
-                            vertical: 12,
+                        elevation: 6,
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 6,
                           ),
                           child: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              Icon(
-                                Icons.play_circle_fill,
-                                color: Colors.black,
-                                size: 22,
+                              const Icon(
+                                Icons.bolt,
+                                color: AppColors.accent,
+                                size: 18,
                               ),
-                              SizedBox(width: 8),
+                              const SizedBox(width: 8),
                               Text(
-                                'Play natively (ad-free)',
-                                style: TextStyle(
-                                  color: Colors.black,
-                                  fontWeight: FontWeight.w700,
+                                'Pindah ke player native dalam '
+                                '$_countdownLeft s…',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 13,
                                 ),
+                              ),
+                              TextButton(
+                                onPressed: _cancelAutoHandoff,
+                                child: const Text('Batal'),
                               ),
                             ],
                           ),
@@ -835,8 +797,52 @@ class _WebViewPlayerScreenState extends State<WebViewPlayerScreen> {
                       ),
                     ),
                   ),
-                ),
-            ],
+                // A direct stream URL was found inside the embed player — offer
+                // to continue in the ad-free native player at the same spot
+                // (hidden while the auto-handoff countdown is running).
+                if (_nativeStream != null && !_handoffPending)
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    bottom: 48,
+                    child: Center(
+                      child: Material(
+                        color: AppColors.accent,
+                        borderRadius: BorderRadius.circular(28),
+                        elevation: 6,
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(28),
+                          onTap: _handOffToNative,
+                          child: const Padding(
+                            padding: EdgeInsets.symmetric(
+                              horizontal: 20,
+                              vertical: 12,
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  Icons.play_circle_fill,
+                                  color: Colors.black,
+                                  size: 22,
+                                ),
+                                SizedBox(width: 8),
+                                Text(
+                                  'Play natively (ad-free)',
+                                  style: TextStyle(
+                                    color: Colors.black,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
           ),
         ),
       ),

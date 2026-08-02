@@ -24,9 +24,7 @@ class WatchlistScreen extends ConsumerWidget {
                 right: 16,
                 top: 16,
                 bottom:
-                    Theme.of(context).platform == TargetPlatform.iOS
-                        ? 110
-                        : 16,
+                    Theme.of(context).platform == TargetPlatform.iOS ? 110 : 16,
               ),
               gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                 crossAxisCount: 3,

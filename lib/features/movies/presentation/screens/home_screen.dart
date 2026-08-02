@@ -98,8 +98,7 @@ class _HeaderBanner extends StatelessWidget {
               ),
               child: const Row(
                 children: [
-                  Icon(Icons.movie_filter,
-                      color: Color(0xFF4DE1FF), size: 26),
+                  Icon(Icons.movie_filter, color: Color(0xFF4DE1FF), size: 26),
                   SizedBox(width: 10),
                   Text(
                     'FilmKU',

@@ -7,6 +7,7 @@ import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
 import '../widgets/error_view.dart';
+import '../widgets/player_swipe_dismiss.dart';
 
 /// Arguments for the mpv native player route (WebView handoff streams).
 class MpvPlayerArgs {
@@ -129,72 +130,77 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
     return Scaffold(
       backgroundColor: Colors.black,
       body: SafeArea(
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            // libmpv renders + letterboxes; the built-in adaptive controls
-            // provide play/pause, seek bar and volume.
-            Video(controller: _videoController),
-            // Title + source chip + close — always accessible (immersive
-            // mode hides the system affordances).
-            Positioned(
-              top: 8,
-              left: 8,
-              right: 8,
-              child: Row(
-                children: [
-                  _RoundIconButton(
-                    icon: Icons.close,
-                    tooltip: 'Close player',
-                    onPressed: () => _close(),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      widget.args.title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 15,
-                        fontWeight: FontWeight.w700,
+        // iOS: swipe down anywhere to leave fullscreen (no need to kill the
+        // app from the background). Non-iOS platforms are a pass-through.
+        child: PlayerSwipeDismiss(
+          onDismiss: () => _close(),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              // libmpv renders + letterboxes; the built-in adaptive controls
+              // provide play/pause, seek bar and volume.
+              Video(controller: _videoController),
+              // Title + source chip + close — always accessible (immersive
+              // mode hides the system affordances).
+              Positioned(
+                top: 8,
+                left: 8,
+                right: 8,
+                child: Row(
+                  children: [
+                    _RoundIconButton(
+                      icon: Icons.close,
+                      tooltip: 'Close player',
+                      onPressed: () => _close(),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        widget.args.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                        ),
                       ),
                     ),
-                  ),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 5,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.black54,
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                    child: Text(
-                      widget.args.sourceLabel,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 11,
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 5,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.black54,
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: Text(
+                        widget.args.sourceLabel,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 11,
+                        ),
                       ),
                     ),
-                  ),
-                ],
-              ),
-            ),
-            if (_failed)
-              Center(
-                child: ErrorView(
-                  message:
-                      'Native playback failed for ${widget.args.sourceLabel}.',
-                  onRetry: () {
-                    setState(() => _failed = false);
-                    _open();
-                  },
-                  secondaryLabel: 'Back to WebView',
-                  onSecondary: () => _close(failed: true),
+                  ],
                 ),
               ),
-          ],
+              if (_failed)
+                Center(
+                  child: ErrorView(
+                    message:
+                        'Native playback failed for ${widget.args.sourceLabel}.',
+                    onRetry: () {
+                      setState(() => _failed = false);
+                      _open();
+                    },
+                    secondaryLabel: 'Back to WebView',
+                    onSecondary: () => _close(failed: true),
+                  ),
+                ),
+            ],
+          ),
         ),
       ),
     );

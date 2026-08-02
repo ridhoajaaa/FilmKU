@@ -2,9 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:video_player/video_player.dart';
 
-import '../../../../core/constants/app_constants.dart';
 import '../../../../core/local/settings_service.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../data/datasources/stream_source_datasource.dart';
@@ -13,12 +11,12 @@ import '../../domain/entities/video_source.dart';
 import '../providers/movie_providers.dart';
 import '../widgets/error_view.dart';
 import '../widgets/hidden_stream_capture.dart';
-import '../widgets/video_player_controls.dart';
 import 'mpv_player_screen.dart';
 import 'webview_player_screen.dart';
 
 /// Native, ad-free video player. Extracts direct stream links via the
-/// SourceAggregator and plays them with `video_player` — no ads render.
+/// SourceAggregator and plays them with the libmpv native player
+/// (`media_kit`) — no ads render.
 class PlayerScreen extends ConsumerStatefulWidget {
   const PlayerScreen({super.key, required this.movieId});
 
@@ -109,44 +107,11 @@ class PlayerScreen extends ConsumerStatefulWidget {
     return candidates.sublist(0, max);
   }
 
-  /// Builds browser-like headers for a native media request.
-  ///
-  /// Some CDNs (e.g. VidLink's signed `.mp4`) reject bare ExoPlayer fetches
-  /// with HTTP 403/428. Sending a `Referer`/`Origin` matching the source's
-  /// embed page plus the app's mobile [AppConstants.defaultUserAgent] mimics
-  /// how a real browser would request the stream. Exposed for tests.
-  ///
-  /// NOTE (experiment 2026-08): a standalone probe showed VidLink's CDN
-  /// still answers 428 Precondition Required even with full browser headers
-  /// when the TLS fingerprint is not a real browser — so this may not be
-  /// enough on its own, but it is the cheapest thing to try on device.
-  @visibleForTesting
-  static Map<String, String> buildStreamHeaders(VideoSource source) {
-    final headers = <String, String>{
-      'User-Agent': AppConstants.defaultUserAgent,
-      'Accept': '*/*',
-    };
-    final embedUrl = source.embedUrl;
-    if (embedUrl != null && embedUrl.isNotEmpty) {
-      final uri = Uri.tryParse(embedUrl);
-      // `.origin` throws `Bad state` when the URI has no scheme (e.g. a
-      // relative path like `not a url`), so guard before reading it.
-      final origin =
-          (uri != null && uri.hasScheme && uri.hasAuthority) ? uri.origin : '';
-      if (origin.isNotEmpty) {
-        headers['Origin'] = origin;
-        headers['Referer'] = embedUrl;
-      }
-    }
-    return headers;
-  }
-
   @override
   ConsumerState<PlayerScreen> createState() => _PlayerScreenState();
 }
 
 class _PlayerScreenState extends ConsumerState<PlayerScreen> {
-  VideoPlayerController? _controller;
   VideoSource? _selected;
   List<VideoSource> _sources = const <VideoSource>[];
   bool _loading = true;
@@ -182,7 +147,6 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
 
   @override
   void dispose() {
-    _controller?.dispose();
     _restorePortrait();
     super.dispose();
   }
@@ -253,11 +217,17 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
     }
   }
 
+  /// Plays a direct extraction URL in the libmpv native player (media_kit).
+  ///
+  /// Direct URLs are ALWAYS played with mpv — `video_player` (ExoPlayer on
+  /// Android, AVPlayer on iOS) has repeatedly failed on-device for these CDN
+  /// streams (403/428 on signed URLs, MediaCodec renderer crashes), while mpv
+  /// is the ONE native player proven on both platforms. On iOS the extraction
+  /// usually SUCCEEDS (unlike Android), so the old `_initPlayer` would try
+  /// AVPlayer, fail, and dump the user into "Play in WebView" — routing here
+  /// makes iOS identical to Android: extraction → native mpv, no detour. On
+  /// mpv failure the caller returns to the WebView fallback.
   Future<void> _initPlayer(VideoSource source) async {
-    final old = _controller;
-    _controller = null;
-    await old?.dispose();
-
     final url = source.videoUrl;
     if (url == null) {
       setState(() {
@@ -274,46 +244,11 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
       _error = null;
     });
 
-    // Experimental: some CDNs (e.g. VidLink) reject bare ExoPlayer requests.
-    // When the setting is on, replay the embed page's Origin/Referer + mobile
-    // UA on the media request. Probe evidence suggests the CDN may still
-    // demand a real browser TLS fingerprint, but this is the cheapest thing
-    // to try on device before falling back to the WebView player.    // TEMP-DIAG: capture what was actually sent so the logcat analysis can
-    // prove whether headers were on/off during the failed attempt. Remove
-    // together with the catch-block logging after the experiment.
-    final headersOn = SettingsService.instance.browserHeaders;
-    final httpHeaders = headersOn
-        ? PlayerScreen.buildStreamHeaders(source)
-        : const <String, String>{};
-    debugPrint(
-      'FILMKU_PLAYER_INIT_REQUEST headersOn=$headersOn '
-      'headers=$httpHeaders url=$url',
+    debugPrint('FILMKU_PLAYER_DIRECT source=${source.sourceId} url=$url');
+    await _playInMpv(
+      WebViewNativeStream(url: url, position: Duration.zero),
+      source,
     );
-    final controller = VideoPlayerController.networkUrl(Uri.parse(url),
-        httpHeaders: httpHeaders);
-    _controller = controller;
-    try {
-      await controller.initialize();
-      await controller.setLooping(false);
-      await controller.play();
-      if (mounted) setState(() => _loading = false);
-    } catch (error, stackTrace) {
-      // TEMP-DIAG: log the full error so logcat shows the CDN's actual HTTP
-      // response (403/428) inside ExoPlayer's HttpDataSourceException.
-      // Remove after the on-device experiment is concluded.
-      debugPrint('FILMKU_PLAYER_INIT_ERROR source=${source.label}');
-      debugPrint('FILMKU_PLAYER_INIT_ERROR url=$url');
-      debugPrint('FILMKU_PLAYER_INIT_ERROR type=${error.runtimeType}');
-      debugPrint('FILMKU_PLAYER_INIT_ERROR error=$error');
-      debugPrint('FILMKU_PLAYER_INIT_ERROR stack=$stackTrace');
-      if (mounted) {
-        setState(() {
-          _loading = false;
-          _error = 'Failed to load the stream from ${source.label}. '
-              'Try another source.';
-        });
-      }
-    }
   }
 
   /// Opens the selected source's embed page in the in-app WebView fallback
@@ -534,88 +469,21 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
     return _movieTitleFrom(details);
   }
 
-  void _pickSource() async {
-    final picked = await showModalBottomSheet<VideoSource>(
-      context: context,
-      backgroundColor: AppColors.charcoal,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (context) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Padding(
-              padding: EdgeInsets.all(16),
-              child: Text(
-                'Select Source',
-                style: TextStyle(
-                  fontSize: 17,
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.textPrimary,
-                ),
-              ),
-            ),
-            Flexible(
-              child: ListView(
-                shrinkWrap: true,
-                children: [
-                  for (final source in _sources)
-                    ListTile(
-                      leading: Icon(
-                        source.isPlayable
-                            ? Icons.play_circle_fill
-                            : Icons.error_outline,
-                        color: source.isPlayable
-                            ? AppColors.accent
-                            : AppColors.textMuted,
-                      ),
-                      title: Text(
-                        source.label,
-                        style: const TextStyle(color: AppColors.textPrimary),
-                      ),
-                      subtitle: Text(
-                        '${source.quality} • ${source.sourceId}',
-                        style: const TextStyle(
-                          color: AppColors.textMuted,
-                          fontSize: 12,
-                        ),
-                      ),
-                      trailing: source.sourceId == _selected?.sourceId
-                          ? const Icon(Icons.check_circle,
-                              color: AppColors.accent)
-                          : null,
-                      onTap: source.isPlayable
-                          ? () => Navigator.pop(context, source)
-                          : null,
-                    ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 8),
-          ],
-        ),
-      ),
-    );
-    if (picked != null && mounted) {
-      await _initPlayer(picked);
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     // Watched unconditionally at the top of build — Riverpod requires the
-    // set of watched providers to stay stable across rebuilds.
-    final details = ref.watch(movieDetailsProvider(widget.movieId));
+    // set of watched providers to stay stable across rebuilds (the title is
+    // read lazily in [_movieTitle] when the mpv player is pushed).
+    ref.watch(movieDetailsProvider(widget.movieId));
     return Scaffold(
       backgroundColor: Colors.black,
       body: SafeArea(
-        child: _buildBody(title: _movieTitleFrom(details)),
+        child: _buildBody(),
       ),
     );
   }
 
-  Widget _buildBody({required String title}) {
+  Widget _buildBody() {
     if (_loading) {
       return const Center(
         child: Column(
@@ -706,53 +574,25 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
         ],
       );
     }
-    if (_error != null) {
-      // When extraction found nothing at all (the common on-device case),
-      // still offer the WebView fallback using the first enabled provider's
-      // embed page — otherwise the escape hatch is hidden exactly when the
-      // user needs it most.
-      final fallbackSource =
-          PlayerScreen.selectFallbackSource(_selected, _sources) ??
-              PlayerScreen.buildFallbackWebViewSource(widget.movieId);
-      return ErrorView(
-        message: _error!,
-        onRetry: _loadSources,
-        secondaryLabel: fallbackSource == null ? null : 'Play in WebView',
-        onSecondary: fallbackSource == null
-            ? null
-            : () => _openWebViewFallback(fallbackSource),
-        secondaryHint: fallbackSource == null ? null : 'May show source ads',
-      );
-    }
-
-    final controller = _controller;
-    if (controller == null) {
-      return const Center(
-        child: Text(
-          'Player not initialized',
-          style: TextStyle(color: AppColors.textMuted),
-        ),
-      );
-    }
-
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        Center(
-          child: AspectRatio(
-            aspectRatio: controller.value.aspectRatio,
-            child: VideoPlayer(controller),
-          ),
-        ),
-        if (controller.value.isInitialized)
-          CustomVideoControls(
-            controller: controller,
-            title: title,
-            sourceLabel: _selected?.label,
-            onClose: () => context.pop(),
-            onSelectSource: _sources.length > 1 ? _pickSource : null,
-          ),
-      ],
+    // Error state — or the transient gap between mpv closing and the pop
+    // (direct URLs route straight to the mpv player, so this screen only
+    // shows loading / auto-capture / error). When extraction found nothing
+    // at all (the common on-device case), still offer the WebView fallback
+    // using the first enabled provider's embed page — otherwise the escape
+    // hatch is hidden exactly when the user needs it most.
+    final fallbackSource =
+        PlayerScreen.selectFallbackSource(_selected, _sources) ??
+            PlayerScreen.buildFallbackWebViewSource(widget.movieId);
+    return ErrorView(
+      message: _error ??
+          'No playable stream found for this movie.\n'
+              'Try again or enable more sources in Settings.',
+      onRetry: _loadSources,
+      secondaryLabel: fallbackSource == null ? null : 'Play in WebView',
+      onSecondary: fallbackSource == null
+          ? null
+          : () => _openWebViewFallback(fallbackSource),
+      secondaryHint: fallbackSource == null ? null : 'May show source ads',
     );
   }
 

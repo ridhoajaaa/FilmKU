@@ -10,7 +10,6 @@ class SettingsService {
   static const String keyApiKey = 'tmdb_api_key';
   static const String keyHeadless = 'headless_extraction';
   static const String keyFallbackWebview = 'fallback_webview';
-  static const String keyBrowserHeaders = 'browser_headers';
 
   static SettingsService? _instance;
 
@@ -37,13 +36,6 @@ class SettingsService {
   bool get fallbackWebview => (_box.get(keyFallbackWebview) as bool?) ?? false;
   Future<void> setFallbackWebview(bool value) =>
       _box.put(keyFallbackWebview, value);
-
-  /// Experimental: send browser-like Referer/Origin/UA headers on native
-  /// media requests (some CDNs, e.g. VidLink, reject bare ExoPlayer fetches
-  /// with HTTP 403/428). Off by default.
-  bool get browserHeaders => (_box.get(keyBrowserHeaders) as bool?) ?? false;
-  Future<void> setBrowserHeaders(bool value) =>
-      _box.put(keyBrowserHeaders, value);
 
   /// Per-source enable flag; sources are enabled by default.
   bool isSourceEnabled(String sourceId) =>
