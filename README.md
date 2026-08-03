@@ -389,6 +389,33 @@ flutter doctor   # Android toolchain should be green
 
 ## 📝 Changelog
 
+### `2026-08-03` — v1.3.7: iOS native playback root-cause fix — VidLink URLs are WebView-only, never feed them to mpv
+
+**On-device evidence (iOS syslog 2026-08-03):** VidLink's signed URL carries an EMPTY
+`headers={}` query template that the player NEVER fills (the browser itself requests
+it empty — netlog-verified), and the CDN (`noir.suubmon.store`) rejects every non-
+browser replay with **HTTP 428** (tested: app headers, full browser header set,
+cookies, range, HTTP/1.1, HTTP/2 — all 428). libmpv can never play it; on-device
+mpv reported `Failed to open` 0.5s after every open. Handing it to mpv just bounced
+back into the WebView, where the iOS player sat PAUSED at 0s forever (spinner).
+
+- **Hidden auto-capture rejects non-directly-playable URLs** (empty `headers={}`
+  template) and gives up on the provider after 2 consecutive rejections (~4s),
+  advancing to the NEXT provider instead of burning the budget — so on iOS the
+  proven native-friendly **2Embed.skin** (the source Android's 2/2 flow captured)
+  gets its shot, and VidLink (WebView-only) is skipped fast.
+- **Visible WebView:** an unplayable URL no longer registers as a native stream —
+  no more ghost "Play natively" handoff, no auto-handoff countdown over a
+  WebView-only source, and the **"Tap to play" overlay now actually appears** for
+  a paused `<video>` (it was suppressed by the bogus native-stream).
+- **Ad-stripper no longer kills the play button:** the injected all-frames script
+  now treats elements whose id/class contains `play`/`start`/`watch` as player
+  affordances (never removed). Previously an overlay named `*-play*` was killed as
+  an "ad" — leaving iOS players (which wait for a play tap) with no play button
+  and a forever-spinner.
+- 4 new unit tests (empty-template rejection incl. lowercase `%7b%7d`, give-up
+  threshold, CDN identity normalization). **151/151 pass, analyze clean.**
+
 ### `2026-08-03` — v1.3.6: iOS release builds now log to the system log (NSLog bridge) — logcat finally works on iPhone
 
 - **Why logcat was always empty on iOS:** `debugPrint` is a NO-OP in release

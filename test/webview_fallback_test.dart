@@ -5,7 +5,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:filmku/features/movies/domain/entities/video_source.dart';
 import 'package:filmku/features/movies/presentation/screens/player_screen.dart';
 import 'package:filmku/features/movies/presentation/screens/webview_player_screen.dart';
+import 'package:filmku/features/movies/data/datasources/stream_source_datasource.dart';
 import 'package:filmku/features/movies/presentation/widgets/error_view.dart';
+import 'package:filmku/features/movies/presentation/widgets/hidden_stream_capture.dart';
 import 'package:filmku/features/movies/presentation/widgets/stream_capture_core.dart';
 
 /// Tests for the WebView fallback player wiring.
@@ -694,6 +696,70 @@ void main() {
 
     test('empty list => empty header', () {
       expect(WebViewPlayerScreen.formatCookieHeader([]), '');
+    });
+  });
+
+  group('HiddenStreamCapture non-playable URL rejection (VidLink 428 class)',
+      () {
+    test('empty headers={} template URL is NOT directly playable', () {
+      expect(
+        StreamSourceDataSource.isDirectPlayableUrl(
+          'https://noir.suubmon.store/mp/resource/abc.mp4'
+          '?sign=x&t=1785546276&headers=%7B%7D'
+          '&host=https%3A%2F%2Fbcdn.example.com',
+        ),
+        isFalse,
+      );
+      // Lowercase percent-encoding must also be rejected.
+      expect(
+        StreamSourceDataSource.isDirectPlayableUrl(
+          'https://cdn.example.com/v.mp4?headers=%7b%7d&sign=x',
+        ),
+        isFalse,
+      );
+    });
+
+    test('filled or absent headers param remains playable', () {
+      expect(
+        StreamSourceDataSource.isDirectPlayableUrl(
+          'https://cdn.example.com/v.mp4?headers=abc&sign=x',
+        ),
+        isTrue,
+      );
+      expect(
+        StreamSourceDataSource.isDirectPlayableUrl(
+          'https://cdn.example.com/v.m3u8?token=abc',
+        ),
+        isTrue,
+      );
+    });
+
+    test('give-up triggers only after the consecutive-rejection threshold', () {
+      expect(
+        HiddenStreamCapture.shouldGiveUpOnNonPlayable(
+          HiddenStreamCapture.nonPlayableGiveUpThreshold - 1,
+        ),
+        isFalse,
+      );
+      expect(
+        HiddenStreamCapture.shouldGiveUpOnNonPlayable(
+          HiddenStreamCapture.nonPlayableGiveUpThreshold,
+        ),
+        isTrue,
+      );
+    });
+
+    test('cdnFailureKey normalizes signed URLs to a stable identity', () {
+      // Signed URLs rotate their token on every retry — the give-up counter
+      // must accumulate on scheme+host+path, not the full URL.
+      final a = HiddenStreamCapture.cdnFailureKey(
+        'https://noir.suubmon.store/mp/resource/a.mp4?sign=1&t=100',
+      );
+      final b = HiddenStreamCapture.cdnFailureKey(
+        'https://noir.suubmon.store/mp/resource/a.mp4?sign=2&t=200',
+      );
+      expect(a, b);
+      expect(a, 'https://noir.suubmon.store/mp/resource/a.mp4');
     });
   });
 }

@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
 import '../../../../core/webview/capture_webview_settings.dart';
+import '../../data/datasources/stream_source_datasource.dart';
 import 'stream_capture_core.dart';
 
 /// WebView that loads a source embed page and captures the direct media URL
@@ -122,6 +123,24 @@ class HiddenStreamCapture extends StatefulWidget {
   static bool shouldEarlyAbort(int failureCount) =>
       failureCount >= earlyAbortFailureThreshold;
 
+  /// Consecutive rejections of the SAME non-directly-playable URL that make
+  /// the capture give up on this provider (fail fast to the next one).
+  ///
+  /// On-device evidence (2026-08, iOS): VidLink's signed URL carries an EMPTY
+  /// `headers={}` query template that the player NEVER fills — the browser
+  /// itself requests it empty (netlog-verified) — so the capture keeps
+  /// re-reading the same unplayable URL on every probe and would burn the
+  /// full budget waiting for a filled URL that never comes. Two consecutive
+  /// rejections (~4s of probes) mean this provider can only be watched in a
+  /// real browser (visible WebView), not natively — skip it.
+  static const int nonPlayableGiveUpThreshold = 2;
+
+  /// Whether [consecutiveRejections] of the same unplayable URL have reached
+  /// [nonPlayableGiveUpThreshold]. Exposed for tests.
+  @visibleForTesting
+  static bool shouldGiveUpOnNonPlayable(int consecutiveRejections) =>
+      consecutiveRejections >= nonPlayableGiveUpThreshold;
+
   /// The embed page to load (e.g. `https://vidsrc.to/embed/movie/123`).
   final String url;
 
@@ -150,9 +169,21 @@ class _HiddenStreamCaptureState extends State<HiddenStreamCapture> {
   /// Fresh per provider because the widget is keyed by provider index.
   final Map<String, int> _fatalFailures = <String, int>{};
 
-  /// Guards against double-abort (network errors keep firing while the state
-  /// settles after [HiddenStreamCapture.earlyAbortFailureThreshold]).
+  /// Guards against double-abort/double-give-up: once this provider is done
+  /// (network-blocked via [_maybeEarlyAbort], or never-natively-playable via
+  /// the `_setCaptured` give-up), the WebView can still fire interception
+  /// callbacks while the parent swaps in the next provider — a second
+  /// `onTimeout()` would advance the provider index twice and SKIP a source.
   bool _earlyAborted = false;
+
+  /// Normalized identity of the last REJECTED (non-directly-playable) URL
+  /// and how many times in a row it was rejected. VidLink's signed URL is
+  /// re-read on every probe with the same empty `headers={}` template, so
+  /// after [HiddenStreamCapture.nonPlayableGiveUpThreshold] consecutive
+  /// rejections the capture gives up on this provider instead of burning the
+  /// full budget on a URL mpv can never play.
+  String _rejectedKey = '';
+  int _rejectedCount = 0;
 
   @override
   void initState() {
@@ -202,8 +233,40 @@ class _HiddenStreamCaptureState extends State<HiddenStreamCapture> {
   }
 
   void _setCaptured(String url, Duration position, {String via = 'probe'}) {
-    if (_captured != null || !mounted) return;
+    if (_earlyAborted || _captured != null || !mounted) return;
     if (!embedIsNativeStreamCandidate(url, embedUrl: widget.url)) return;
+    // A signed URL with an EMPTY `headers={}` template (VidLink) is rejected
+    // by the CDN with HTTP 428 when replayed outside the page — mpv can
+    // never play it (verified on-device 2026-08: "Failed to open" 0.5s after
+    // open). It is NOT a native capture: hand it to mpv and the screen just
+    // bounces back into the WebView. Consecutive rejections of the same
+    // (scheme+host+path) URL mean the player will never expose a playable
+    // one — fail fast to the next provider (or the visible WebView, which
+    // CAN play it in a real browser).
+    if (!StreamSourceDataSource.isDirectPlayableUrl(url)) {
+      final key = HiddenStreamCapture.cdnFailureKey(url);
+      if (key == _rejectedKey) {
+        _rejectedCount++;
+      } else {
+        _rejectedKey = key;
+        _rejectedCount = 1;
+      }
+      debugPrint(
+        'FILMKU_AUTOCAPTURE_SKIP_NONPLAYABLE url=$url key=$key '
+        'count=$_rejectedCount',
+      );
+      if (HiddenStreamCapture.shouldGiveUpOnNonPlayable(_rejectedCount)) {
+        _earlyAborted = true;
+        _probeTimer?.cancel();
+        _timeoutTimer?.cancel();
+        debugPrint(
+          'FILMKU_AUTOCAPTURE_GIVEUP source=${widget.sourceLabel} '
+          'url=$url',
+        );
+        widget.onTimeout();
+      }
+      return;
+    }
     debugPrint(
       'FILMKU_AUTOCAPTURE_CAPTURED via=$via url=$url '
       'posMs=${position.inMilliseconds}',

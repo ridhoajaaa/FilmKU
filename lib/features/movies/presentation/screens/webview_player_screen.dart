@@ -8,6 +8,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/webview/capture_webview_settings.dart';
+import '../../data/datasources/stream_source_datasource.dart';
 import '../widgets/error_view.dart';
 import '../widgets/player_swipe_dismiss.dart';
 import '../widgets/stream_capture_core.dart';
@@ -196,7 +197,7 @@ class WebViewPlayerScreen extends StatefulWidget {
   static const String _allFramesJs = '(function(){'
       'if(window.__filmkuA)return;window.__filmkuA=true;'
       'var ADRE=/(^|[-_ ])(ad|ads|advert|banner|popup|popunder|overlay|sponsor)([-_ ]|\$)/i;'
-      'var SKIPRE=/player|video|movie|jw|plyr|menu|quality|setting|control|modal/i;'
+      'var SKIPRE=/player|video|movie|jw|plyr|menu|quality|setting|control|modal|play|start|watch/i;'
       'function adlike(e){if(!e||e.nodeType!==1)return false;'
       'var s=(e.id||"")+" "+(typeof e.className==="string"?e.className:"");'
       'if(!ADRE.test(s))return false;if(SKIPRE.test(s))return false;'
@@ -401,6 +402,16 @@ class _WebViewPlayerScreenState extends State<WebViewPlayerScreen> {
   /// and surfaces the "Play natively" affordance. A stream with a real
   /// position (relay/probe) wins over a position-less network capture.
   void _setNativeStream(String url, Duration position, {String via = 'probe'}) {
+    // A signed URL with an EMPTY `headers={}` template (VidLink) is rejected
+    // by the CDN with HTTP 428 when replayed outside the page — mpv can
+    // never play it (verified on-device 2026-08). Do NOT register it as a
+    // native stream: the "Play natively" button must not offer a doomed
+    // handoff, and keeping [_nativeStream] null lets the "Tap to play"
+    // overlay appear instead (a paused video must not count as playable).
+    if (!StreamSourceDataSource.isDirectPlayableUrl(url)) {
+      debugPrint('FILMKU_WEBVIEW_SKIP_NONPLAYABLE via=$via url=$url');
+      return;
+    }
     final current = _nativeStream;
     if (current != null && current.position > Duration.zero) return;
     if (current != null && position <= Duration.zero) return;
@@ -484,6 +495,15 @@ class _WebViewPlayerScreenState extends State<WebViewPlayerScreen> {
             url,
             embedUrl: widget.args.url,
           )) {
+        return;
+      }
+      // Not directly playable outside the page (empty `headers={}` template,
+      // VidLink): don't track stability either — otherwise the auto-handoff
+      // countdown would arm for a stream mpv can never open (ghost countdown
+      // over a WebView-only source). [_setNativeStream] rejects the same way
+      // for the intercept/fetch paths.
+      if (!StreamSourceDataSource.isDirectPlayableUrl(url)) {
+        debugPrint('FILMKU_WEBVIEW_SKIP_NONPLAYABLE probe url=$url');
         return;
       }
       final seconds = decoded['t'];

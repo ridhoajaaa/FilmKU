@@ -123,7 +123,7 @@ bool embedIsMediaUrl(String url) {
 const String embedAllFramesScript = '(function(){'
     'if(window.__filmkuA)return;window.__filmkuA=true;'
     'var ADRE=/(^|[-_ ])(ad|ads|advert|banner|popup|popunder|overlay|sponsor)([-_ ]|\$)/i;'
-    'var SKIPRE=/player|video|movie|jw|plyr|menu|quality|setting|control|modal/i;'
+    'var SKIPRE=/player|video|movie|jw|plyr|menu|quality|setting|control|modal|play|start|watch/i;'
     'function adlike(e){if(!e||e.nodeType!==1)return false;'
     'var s=(e.id||"")+" "+(typeof e.className==="string"?e.className:"");'
     'if(!ADRE.test(s))return false;if(SKIPRE.test(s))return false;'
