@@ -99,13 +99,33 @@ class MpvPlayerScreen extends StatefulWidget {
   }) =>
       playing && sawPlaying && currentPosition == lastWatchPosition;
 
+  /// Whether a mid-play error that produced NO progress at all should be
+  /// treated as a never-started stream (compact auto-failover to the backup
+  /// player) instead of a genuine mid-playback stall (full error UI with
+  /// Retry).
+  ///
+  /// 2026-08 root cause: libmpv reports `playing` while the stream is STILL
+  /// LOADING (the core is not idle while it fetches the master playlist), so
+  /// an error arriving while the position is still zero means the CDN
+  /// rejected the stream before the first frame (vidlink's signed URLs →
+  /// HTTP 403/428 with an unfillable `headers={}` template). That must NOT
+  /// park the full "Native playback failed" UI over a still-loading player.
+  /// Once the position advanced past zero, real playback happened, so a
+  /// subsequent stall keeps the full error UI.
+  /// Exposed for tests.
+  @visibleForTesting
+  static bool shouldAutoFailoverOnStall({required Duration lastPosition}) =>
+      lastPosition <= Duration.zero;
+
   /// How long the "switching to backup player…" notice stays up before the
   /// screen auto-pops with `failed=true` (so [PlayerScreen] continues in the
   /// visible WebView fallback — which is proven to actually play these CDN
   /// streams — instead of parking on a dead-end error UI over a loading
-  /// player). Exposed for tests.
+  /// player). Long enough to read the real CDN error shown in the notice
+  /// (e.g. "HTTP 428"), short enough to not feel like another dead-end wait.
+  /// Exposed for tests.
   @visibleForTesting
-  static const Duration failoverNoticeDuration = Duration(milliseconds: 1500);
+  static const Duration failoverNoticeDuration = Duration(milliseconds: 2500);
 
   @override
   State<MpvPlayerScreen> createState() => _MpvPlayerScreenState();
@@ -123,6 +143,11 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
   /// then pops with `failed=true`. Mid-play failures (silent freeze, error
   /// stall) keep the full error UI with Retry.
   bool _autoFailover = false;
+
+  /// The real reason a never-started stream failed (e.g. the CDN's HTTP 403/
+  /// 428 from a signed vidlink URL), shown under the "switching…" notice so
+  /// the user sees WHY before the screen auto-pops into the WebView.
+  String _failoverDetail = '';
   StreamSubscription<String>? _errorSub;
   StreamSubscription<bool>? _playingSub;
   StreamSubscription<Duration>? _positionSub;
@@ -279,6 +304,7 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
     setState(() {
       _failed = true;
       _autoFailover = true;
+      _failoverDetail = detail;
     });
     debugPrint('FILMKU_MPV_STARTUP_FAIL $detail');
     _failoverTimer?.cancel();
@@ -340,29 +366,51 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
           !_failed &&
           _player.state.playing &&
           _lastPosition <= posAtError) {
-        debugPrint('FILMKU_MPV_ERROR_STALLED '
-            '(no progress in ${_errorGracePeriod.inSeconds}s)');
-        _markFailed('Playback stalled: $error');
+        if (MpvPlayerScreen.shouldAutoFailoverOnStall(
+            lastPosition: _lastPosition)) {
+          // Never actually played (position never advanced past zero): the
+          // CDN rejected the stream before the first frame (vidlink's signed
+          // URLs → 403/428). Auto-failover to the backup player instead of
+          // parking the full error UI over a still-loading player — the
+          // exact symptom on iOS, 2026-08. Consistent with the startup
+          // timeout / open-error / pre-start error paths.
+          _startupFailed('Playback error: $error');
+        } else {
+          debugPrint('FILMKU_MPV_ERROR_STALLED '
+              '(no progress in ${_errorGracePeriod.inSeconds}s)');
+          _markFailed('Playback stalled: $error');
+        }
       }
     });
   }
 
-  /// Tracks real progress: playing=true marks the stream as genuinely
-  /// started (transient errors after that are ignored); position advances
-  /// confirm progress for [MpvPlayerScreen.shouldSurfaceFailure].
+  /// Tracks real progress. IMPORTANT (2026-08 root cause): the libmpv
+  /// `playing` event fires while the stream is STILL LOADING (the core is not
+  /// idle while it fetches the master playlist), so `playing` alone must NOT
+  /// mark the stream as started — a CDN reject (vidlink's signed URLs →
+  /// 403/428) would otherwise cancel the startup watchdog and the error path
+  /// would park the full error UI over a still-loading player. "Started" is
+  /// therefore defined ONLY by the position advancing past zero (real first
+  /// frame / first progress).
   void _listenForPlayback() {
     _playingSub = _player.stream.playing.listen((playing) {
-      if (playing && !_sawPlaying) {
-        _sawPlaying = true;
-        _startupWatchdog?.cancel();
-        debugPrint('FILMKU_MPV_PLAYING');
-      }
+      // Deliberately empty: see the doc above. Real start is decided in the
+      // position listener.
     });
     _positionSub = _player.stream.position.listen((position) {
       // RAW current position — updates on every event, including backward
       // seeks, so the silent-freeze watchdog compares true progress (not a
       // monotonic high-watermark that never decreases).
       _currentPosition = position;
+      if (position > Duration.zero && !_sawPlaying) {
+        // First real progress — the stream genuinely started. Cancelling the
+        // startup watchdog here (not on `playing`) keeps the 12s failover
+        // alive for streams that never answer while never killing one that
+        // is simply buffering its first frames.
+        _sawPlaying = true;
+        _startupWatchdog?.cancel();
+        debugPrint('FILMKU_MPV_PLAYING (position advanced past zero)');
+      }
       if (position > _lastPosition) {
         _lastPosition = position;
         // Real progress while an error grace window is open ⇒ the error was
@@ -476,24 +524,44 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
                 // Stream never started — auto-switching to the backup player.
                 // Compact notice (NOT the full error UI) so the user isn't
                 // parked on a dead-end error over a still-loading player.
-                const ColoredBox(
+                // The real CDN error (e.g. "HTTP 428") is shown underneath so
+                // the user sees WHY before the screen auto-pops into the
+                // WebView fallback.
+                ColoredBox(
                   color: Colors.black87,
                   child: Center(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        CircularProgressIndicator(color: Colors.white70),
-                        SizedBox(height: 14),
-                        Text(
-                          'Stream tidak dapat dimulai — '
-                          'beralih ke pemutar cadangan…',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 14,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 24),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const CircularProgressIndicator(
+                              color: Colors.white70),
+                          const SizedBox(height: 14),
+                          const Text(
+                            'Stream tidak dapat dimulai — '
+                            'beralih ke pemutar cadangan…',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 14,
+                            ),
                           ),
-                        ),
-                      ],
+                          if (_failoverDetail.isNotEmpty) ...[
+                            const SizedBox(height: 8),
+                            Text(
+                              _failoverDetail,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(
+                                color: Colors.white54,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
                     ),
                   ),
                 ),

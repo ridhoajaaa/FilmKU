@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:filmku/features/movies/domain/entities/video_source.dart';
@@ -218,7 +219,8 @@ void main() {
   });
 
   group('PlayerScreen.shouldReArmAutoHandoff (mpv failure loop guard)', () {
-    test('first mpv failure re-arms auto-handoff (WebView can capture a '
+    test(
+        'first mpv failure re-arms auto-handoff (WebView can capture a '
         'working URL and hand it back to the native player)', () {
       expect(PlayerScreen.shouldReArmAutoHandoff(1), isTrue);
     });
@@ -676,6 +678,22 @@ void main() {
 
       expect(find.text('Open embed'), findsOneWidget);
       expect(find.text('May show source ads'), findsNothing);
+    });
+  });
+
+  group('WebViewPlayerScreen.formatCookieHeader', () {
+    test('joins cookies into one Cookie header value', () {
+      expect(
+        WebViewPlayerScreen.formatCookieHeader([
+          Cookie(name: 'session', value: 'abc123'),
+          Cookie(name: 'region', value: 'id'),
+        ]),
+        'session=abc123; region=id',
+      );
+    });
+
+    test('empty list => empty header', () {
+      expect(WebViewPlayerScreen.formatCookieHeader([]), '');
     });
   });
 }

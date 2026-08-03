@@ -4,7 +4,11 @@ import 'package:flutter/foundation.dart';
 /// or hidden auto-capture), handed to the native (libmpv) player.
 @immutable
 class WebViewNativeStream {
-  const WebViewNativeStream({required this.url, required this.position});
+  const WebViewNativeStream({
+    required this.url,
+    required this.position,
+    this.httpHeaders = const <String, String>{},
+  });
 
   /// Plain `.m3u8`/`.mp4` (or any non-`blob:`) URL played by the embed page's
   /// `<video>` element.
@@ -12,6 +16,11 @@ class WebViewNativeStream {
 
   /// Where playback was, so the native player can resume.
   final Duration position;
+
+  /// Extra HTTP headers for the native player (e.g. the `Cookie` header from
+  /// the WebView's browser session, which some CDNs require — without it the
+  /// handed-off URL would get 403/428 in mpv).
+  final Map<String, String> httpHeaders;
 }
 
 /// Host fragments of known ad/tracker networks. Used both by the request

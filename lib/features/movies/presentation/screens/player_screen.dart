@@ -375,7 +375,13 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
         title: _movieTitle(),
         sourceLabel: source.label,
         startAt: stream.position,
-        httpHeaders: PlayerScreen.buildStreamHeaders(source.embedUrl),
+        // WebView-handoff streams may carry the browser session (Cookie)
+        // headers captured from the WebView — merged over the standard
+        // Referer/Origin/UA so cookie-gated CDNs accept the handed-off URL.
+        httpHeaders: {
+          ...PlayerScreen.buildStreamHeaders(source.embedUrl),
+          ...stream.httpHeaders,
+        },
       ),
     );
     if (!mounted) return;
@@ -391,8 +397,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
       // SECOND failure: auto-handoff DISABLED so the user stays in the
       // WebView instead of an infinite mpv ↔ WebView bounce.
       _mpvFailCount++;
-      final autoHandoff =
-          PlayerScreen.shouldReArmAutoHandoff(_mpvFailCount);
+      final autoHandoff = PlayerScreen.shouldReArmAutoHandoff(_mpvFailCount);
       debugPrint(
         'FILMKU_MPV_FAILED_RETURN_WEBVIEW source=${source.sourceId} '
         'failCount=$_mpvFailCount autoHandoff=$autoHandoff',

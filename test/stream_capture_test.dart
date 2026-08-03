@@ -350,4 +350,57 @@ void main() {
       expect(StreamSourceDataSource.shouldCaptureUrl(decoded), isTrue);
     });
   });
+
+  group('StreamSourceDataSource.isDirectPlayableUrl', () {
+    test('accepts a plain .mp4', () {
+      expect(
+        StreamSourceDataSource.isDirectPlayableUrl(
+          'https://cdn.example.com/video.mp4',
+        ),
+        isTrue,
+      );
+    });
+
+    test('accepts a signed URL with a FILLED headers param', () {
+      // A non-empty headers= template (filled by the player) is replayable.
+      expect(
+        StreamSourceDataSource.isDirectPlayableUrl(
+          'https://cdn.example.com/v.mp4'
+          '?sign=x&headers=%7B%22Referer%22%3A%22https%3A%2F%2Fembed.example%22%7D',
+        ),
+        isTrue,
+      );
+    });
+
+    test('REJECTS the empty headers=%7B%7D template (CDN 428 class)', () {
+      // VidLink-style signed URL the player fills right before requesting;
+      // replayed outside the page the CDN answers 428 Forbidden.
+      expect(
+        StreamSourceDataSource.isDirectPlayableUrl(
+          'https://noir.example.store/mp/bt/abc.mp4'
+          '?sign=deadbeef&t=1785544347'
+          '&headers=%7B%7D&host=https%3A%2F%2Fcdn.example.com',
+        ),
+        isFalse,
+      );
+    });
+
+    test('REJECTS the literal headers={} template', () {
+      expect(
+        StreamSourceDataSource.isDirectPlayableUrl(
+          'https://cdn.example.com/v.mp4?headers={}&sign=x',
+        ),
+        isFalse,
+      );
+    });
+
+    test('rejects script files (extension guard still applies)', () {
+      expect(
+        StreamSourceDataSource.isDirectPlayableUrl(
+          'https://cdn.example.com/hls.m3u8.min.js',
+        ),
+        isFalse,
+      );
+    });
+  });
 }

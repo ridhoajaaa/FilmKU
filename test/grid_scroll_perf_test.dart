@@ -70,7 +70,8 @@ void main() {
     expect(built, lessThan(movies.length));
   });
 
-  testWidgets('iOS grid: scroll to bottom is clean — no overflow, cards recycle',
+  testWidgets(
+      'iOS grid: scroll to bottom is clean — no overflow, cards recycle',
       (tester) async {
     await pumpGrid(tester);
 

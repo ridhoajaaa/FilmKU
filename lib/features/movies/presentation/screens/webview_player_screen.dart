@@ -148,6 +148,12 @@ class WebViewPlayerScreen extends StatefulWidget {
   static bool shouldSurfaceBlankError(int consecutiveBlankProbes) =>
       consecutiveBlankProbes >= blankProbeThreshold;
 
+  /// Formats [cookies] into a single `Cookie` header value (`k=v; k2=v2`)
+  /// for the native player's HTTP headers. Exposed for tests.
+  @visibleForTesting
+  static String formatCookieHeader(List<Cookie> cookies) =>
+      cookies.map((c) => '${c.name}=${c.value}').join('; ');
+
   /// Consecutive probes (each ~2s apart) that must show ADVANCING playback
   /// before the auto-handoff countdown starts. Exposed for tests.
   static const int stableProbeThreshold = 3;
@@ -303,6 +309,13 @@ class _WebViewPlayerScreenState extends State<WebViewPlayerScreen> {
   /// Guards against double-pop when a blank page is detected (probe timers
   /// fire again between the detection and the pop).
   bool _blankEscaped = false;
+
+  /// Re-entrancy guard for the (now async) native handoff: the cookie fetch
+  /// widens the window between invocation and `context.pop`, so a rapid
+  /// double-tap on "Play natively" or a timer-driven handoff racing a manual
+  /// tap could pop the WebView AND the player screen behind it. Set at entry
+  /// so only the first invocation pops.
+  bool _handoffEscaped = false;
 
   /// True when the page shows a `<video>` that stays PAUSED (spinner-forever
   /// on iOS 2026-08): the injected JS autoplay attempt didn't work, so a
@@ -524,15 +537,39 @@ class _WebViewPlayerScreenState extends State<WebViewPlayerScreen> {
 
   /// Pops back to [PlayerScreen] with the discovered native stream so the
   /// playback continues in the ad-free native player at the same position.
-  void _handOffToNative() {
+  /// Attaches the WebView's browser-session cookies for the media host as a
+  /// `Cookie` header — some CDNs only accept the handed-off URL when it
+  /// carries the session (the native player would otherwise get 403/428).
+  /// Best-effort: if reading cookies fails or there are none, the handoff
+  /// proceeds without them.
+  Future<void> _handOffToNative() async {
+    if (_handoffEscaped || !mounted) return;
     final stream = _nativeStream;
     if (stream == null) return;
+    _handoffEscaped = true;
     // Resume from the LATEST observed position (the probe keeps running
     // while the countdown ticks) rather than the first capture.
     final position = _lastProbePosition > Duration.zero
         ? _lastProbePosition
         : stream.position;
-    context.pop(WebViewNativeStream(url: stream.url, position: position));
+    var httpHeaders = const <String, String>{};
+    try {
+      final cookies =
+          await CookieManager.instance().getCookies(url: WebUri(stream.url));
+      if (cookies.isNotEmpty) {
+        httpHeaders = {
+          'Cookie': WebViewPlayerScreen.formatCookieHeader(cookies),
+        };
+      }
+    } catch (_) {
+      // Best-effort — proceed without cookies.
+    }
+    if (!mounted) return;
+    context.pop(WebViewNativeStream(
+      url: stream.url,
+      position: position,
+      httpHeaders: httpHeaders,
+    ));
   }
 
   /// Tracks whether playback is genuinely advancing probe-to-probe; starts

@@ -72,7 +72,7 @@ class _HttpPageScanner {
       // Raw HTML often entity-encodes URLs (`&amp;` for `&`); a literal
       // `&amp;` in a signed query breaks the CDN signature (HTTP 502 class).
       url = StreamSourceDataSource.decodeHtmlEntities(url);
-      if (!StreamSourceDataSource.shouldCaptureUrl(url)) continue;
+      if (!StreamSourceDataSource.isDirectPlayableUrl(url)) continue;
       if (url.endsWith('/')) url = url.substring(0, url.length - 1);
       urls.add(url);
     }
@@ -202,7 +202,7 @@ class HeadlessStreamExtractor {
     void finish() {
       if (!completer.isCompleted) {
         final playable =
-            urls.where(StreamSourceDataSource.shouldCaptureUrl).length;
+            urls.where(StreamSourceDataSource.isDirectPlayableUrl).length;
         debugPrint(
           'FILMKU_EXTRACT_HEADLESS done captured=${urls.length} '
           'playable=$playable',
@@ -224,7 +224,10 @@ class HeadlessStreamExtractor {
         // Same entity-decode as the Dio path: signed URLs observed here can
         // still carry `&amp;` when the player builds them from HTML/JS source.
         u = StreamSourceDataSource.decodeHtmlEntities(u);
-        if (!StreamSourceDataSource.shouldCaptureUrl(u)) return;
+        // Only a genuinely replayable URL counts: an EMPTY `headers={}`
+        // template (VidLink) is rejected by the CDN with 428 when replayed
+        // outside the page, so capturing it would hand mpv a doomed URL.
+        if (!StreamSourceDataSource.isDirectPlayableUrl(u)) return;
         debugPrint('FILMKU_EXTRACT_HEADLESS capture url=$u');
         urls.add(u);
         finish();
@@ -507,10 +510,12 @@ class _ScrapeHelper {
       try {
         final candidates = await HeadlessStreamExtractor.extract(embedUrl);
         // Same false-positive guard as the network interception path: only
-        // keep URLs whose path actually ends in .m3u8/.mp4 (substring
-        // matching would let script/API URLs through and then fail to play).
-        final hit =
-            candidates.where(StreamSourceDataSource.shouldCaptureUrl).toList();
+        // keep URLs whose path actually ends in .m3u8/.mp4 AND that are not
+        // doomed empty `headers={}` templates (substring matching would let
+        // script/API URLs through and then fail to play).
+        final hit = candidates
+            .where(StreamSourceDataSource.isDirectPlayableUrl)
+            .toList();
         // TEMP-DIAG: how many candidates the headless WebView captured and
         // how many passed the guard — zero candidates means the WebView
         // never saw media requests, the core on-device question.
@@ -865,6 +870,30 @@ class StreamSourceDataSource {
           return String.fromCharCode(code);
       }
     });
+  }
+
+  /// Whether [url] is a genuinely replayable direct stream URL.
+  ///
+  /// [shouldCaptureUrl] only checks the media extension. Some signed CDN URLs
+  /// additionally carry a `headers=` QUERY TEMPLATE that the player fills with
+  /// the real session headers right before requesting (VidLink:
+  /// `...mp4?sign=...&headers=%7B%7D&host=...`). An EMPTY template
+  /// (`headers={}` / `headers=%7B%7D`) is rejected by the CDN with HTTP 428
+  /// when replayed outside the page (mpv) — verified 2026-08 against the
+  /// VidLink CDN (`noir.suubmon.store`): 428 with app headers, 403 plain,
+  /// and the browser itself hits 428 on many requests. Treating such URLs as
+  /// non-playable lets the pipeline fall through to the WebView path, which
+  /// captures the FILLED request URL that mpv CAN replay.
+  static bool isDirectPlayableUrl(String url) {
+    if (!shouldCaptureUrl(url)) return false;
+    final query = Uri.tryParse(url)?.query ?? '';
+    if (!RegExp(r'headers=', caseSensitive: false).hasMatch(query)) {
+      return true;
+    }
+    // Percent-encoding hex is case-insensitive (%7b%7d == %7B%7D) and
+    // encoders vary — normalize to lowercase before the empty-template check.
+    final lower = query.toLowerCase();
+    return !(lower.contains('headers=%7b%7d') || lower.contains('headers={}'));
   }
 
   /// Decides whether a scraped URL is a genuine playable media candidate.

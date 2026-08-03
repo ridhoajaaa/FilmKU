@@ -389,6 +389,35 @@ flutter doctor   # Android toolchain should be green
 
 ## 📝 Changelog
 
+### `2026-08-03` — v1.3.5: fix "Native playback failed" over a still-loading mpv + root-cause the vidlink 428
+
+- **The full error UI can no longer render over a still-loading player.**
+  Root cause: libmpv reports `playing` while the stream is STILL LOADING
+  (core not idle), so an error arriving with zero position progress parked
+  the "Native playback failed" UI on top of the loading player. "Started"
+  is now defined ONLY by the position advancing past zero; every
+  never-started failure (startup timeout / open error / any error at zero
+  position) takes the compact "beralih ke pemutar cadangan…" auto-failover
+  into the WebView — never the full error UI. Mid-play stalls (real progress
+  happened, then froze) still show the full UI with Retry.
+- **The real CDN error is now shown** under the failover notice (e.g. the
+  HTTP 428 from a signed vidlink URL) so users see WHY before the WebView
+  takes over — no more infinite mystery loading.
+- **Root cause of vidlink's stuck loading, verified live (2026-08):** the
+  direct URL is a signed TEMPLATE with an empty `headers={}` query param the
+  JS player fills right before requesting; replayed outside the page the CDN
+  answers **HTTP 428 Forbidden** (403 plain) — even the browser hits 428 on
+  many requests. New `isDirectPlayableUrl` filter rejects empty
+  `headers=` templates in BOTH the Dio scan and the headless capture, so the
+  pipeline falls straight through to the WebView path, which captures the
+  FILLED request URL mpv can actually replay (the proven-working route) —
+  skipping the doomed 428 detour.
+- **WebView→mpv handoff now carries the browser session**: the handed-off
+  stream includes the WebView's cookies for the media host as a `Cookie`
+  header (best-effort), so cookie-gated CDNs accept it in mpv.
+- 7 new unit tests (template filter + stall-routing + cookie header).
+  Version bumped to **1.3.5+1** (`pubspec.yaml` + `AppConstants.appVersion`).
+
 ### `2026-08-03` — v1.3.4: Detail cast chips separated from the glass info panel (no more cloudy glass-in-glass)
 
 - **Glass-in-glass fixed on iOS Detail.** The "Top Cast" section (title + chips)

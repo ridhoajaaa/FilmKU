@@ -133,18 +133,44 @@ void main() {
     });
   });
 
+  group('MpvPlayerScreen.shouldAutoFailoverOnStall', () {
+    test('zero progress => never-started => auto-failover (not full error UI)',
+        () {
+      // libmpv can report `playing` while STILL LOADING, so an error with no
+      // position progress means the CDN rejected the stream before the first
+      // frame (vidlink signed URLs → 403/428). Must NOT park the full
+      // "Native playback failed" UI over a still-loading player.
+      expect(
+        MpvPlayerScreen.shouldAutoFailoverOnStall(
+          lastPosition: Duration.zero,
+        ),
+        isTrue,
+      );
+    });
+
+    test('real progress happened => genuine stall => keep full error UI', () {
+      expect(
+        MpvPlayerScreen.shouldAutoFailoverOnStall(
+          lastPosition: const Duration(seconds: 42),
+        ),
+        isFalse,
+      );
+    });
+  });
+
   group('MpvPlayerScreen startup auto-failover', () {
     test('failover notice is brief (not another dead-end wait)', () {
       // The "switching to backup player…" notice must be short — the point is
       // to escape the dead-end mpv loading state fast, then pop into the
-      // WebView fallback automatically.
+      // WebView fallback automatically. 2.5s balances readability of the
+      // real CDN error shown underneath against speed of escape.
       expect(
         MpvPlayerScreen.failoverNoticeDuration,
-        const Duration(milliseconds: 1500),
+        const Duration(milliseconds: 2500),
       );
       expect(
         MpvPlayerScreen.failoverNoticeDuration,
-        lessThan(const Duration(seconds: 3)),
+        lessThan(const Duration(seconds: 4)),
       );
     });
   });
