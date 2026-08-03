@@ -58,3 +58,6 @@ package-lock.json
 
 # Downloaded unsigned IPA artifacts (install_latest_ios.sh keeps them in /tmp)
 *.ipa
+
+# stray -l artifact (created by an accidental file -l invocation)
+-l
