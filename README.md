@@ -389,6 +389,23 @@ flutter doctor   # Android toolchain should be green
 
 ## 📝 Changelog
 
+### `2026-08-03` — v1.3.6: iOS release builds now log to the system log (NSLog bridge) — logcat finally works on iPhone
+
+- **Why logcat was always empty on iOS:** `debugPrint` is a NO-OP in release
+  builds (wrapped in `assert`), so every `FILMKU_*` diagnostic never reached
+  the device log while playback was failing with CDN rejections.
+- **Fix:** new `lib/core/utils/app_logger.dart` — `appLog()` uses plain
+  `print` (works in release; visible in Android logcat + Linux terminal) and
+  on iOS mirrors into the native system log (`NSLog`) via a `filmku/log`
+  MethodChannel handled in `AppDelegate.swift`. All `FILMKU_MPV_*` lines now
+  go through it, so `idevicesyslog` / Console.app capture them in release
+  builds.
+- Verified CDN rejections (2026-08, live probe with the app's exact
+  headers): VidLink signed URLs → **HTTP 428 Forbidden** (403 without
+  headers). v1.3.5 also shows the real mpv error on-screen in the failover
+  notice.
+- Version bumped to **1.3.6+1** (`pubspec.yaml` + `AppConstants.appVersion`).
+
 ### `2026-08-03` — v1.3.5: fix "Native playback failed" over a still-loading mpv + root-cause the vidlink 428
 
 - **The full error UI can no longer render over a still-loading player.**

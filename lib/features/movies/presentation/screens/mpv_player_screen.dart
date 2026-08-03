@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
+import '../../../../core/utils/app_logger.dart';
 import '../widgets/error_view.dart';
 import '../widgets/player_swipe_dismiss.dart';
 
@@ -220,9 +221,9 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
   }
 
   Future<void> _open() async {
-    debugPrint(
-      'FILMKU_MPV_OPEN url=${widget.args.url} '
-      'startAt=${widget.args.startAt.inMilliseconds}',
+    appLog(
+      'FILMKU_MPV_OPEN',
+      'url=${widget.args.url} startAt=${widget.args.startAt.inMilliseconds}',
     );
     // Fresh attempt: clear playback evidence so the error gating and the
     // startup watchdog evaluate THIS run, not the previous (retry) one.
@@ -243,7 +244,7 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
       if (widget.args.startAt > Duration.zero) {
         await _player.seek(widget.args.startAt);
       }
-      debugPrint('FILMKU_MPV_OPENED');
+      appLog('FILMKU_MPV_OPENED', '');
       // If the stream never starts playing, auto-failover to the backup
       // player instead of staring at black: a brief notice, then pop with
       // failed=true so PlayerScreen continues in the visible WebView (which
@@ -251,7 +252,7 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
       _startupWatchdog?.cancel();
       _startupWatchdog = Timer(_startupTimeout, () {
         if (mounted && !_sawPlaying) {
-          debugPrint('FILMKU_MPV_STARTUP_TIMEOUT (no playback in 12s)');
+          appLog('FILMKU_MPV_STARTUP_TIMEOUT', '(no playback in 12s)');
           _startupFailed('Stream did not start playing.');
         }
       });
@@ -273,8 +274,10 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
           // true while it rebuffers), not a dead stream.
           _silentFreezeConsecutive++;
           if (_silentFreezeConsecutive >= 2) {
-            debugPrint('FILMKU_MPV_SILENT_FREEZE '
-                '(no movement over ${_silentFreezePeriod.inSeconds * 2}s)');
+            appLog(
+              'FILMKU_MPV_SILENT_FREEZE',
+              '(no movement over ${_silentFreezePeriod.inSeconds * 2}s)',
+            );
             _markFailed('Playback stalled (no progress).');
           }
         } else {
@@ -283,7 +286,7 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
         _lastWatchPosition = _currentPosition;
       });
     } catch (e) {
-      debugPrint('FILMKU_MPV_OPEN_ERROR $e');
+      appLog('FILMKU_MPV_OPEN_ERROR', '$e');
       // Open threw (bad/unsupported URL) — the stream can never start, so
       // auto-failover to the backup player rather than a dead-end error UI.
       _startupFailed('Failed to open stream.');
@@ -306,7 +309,7 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
       _autoFailover = true;
       _failoverDetail = detail;
     });
-    debugPrint('FILMKU_MPV_STARTUP_FAIL $detail');
+    appLog('FILMKU_MPV_STARTUP_FAIL', detail);
     _failoverTimer?.cancel();
     _failoverTimer = Timer(MpvPlayerScreen.failoverNoticeDuration, () {
       if (mounted) _close(failed: true);
@@ -327,7 +330,7 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
   ///   error UI over a still-playing movie); if it stalls, surface it so the
   ///   user isn't stuck on a frozen frame.
   void _onError(String error) {
-    debugPrint('FILMKU_MPV_ERROR $error');
+    appLog('FILMKU_MPV_ERROR', error);
     if (MpvPlayerScreen.shouldSurfaceFailure(
       sawPlaying: _sawPlaying,
       lastPosition: _lastPosition,
@@ -341,12 +344,12 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
       _startupFailed('Playback error: $error');
       return;
     }
-    debugPrint('FILMKU_MPV_ERROR_GRACE_START (waiting for progress)');
+    appLog('FILMKU_MPV_ERROR_GRACE_START', '(waiting for progress)');
     // Keep the ORIGINAL deadline if a grace window is already armed — a
     // stream emitting errors every few seconds (with no progress) must still
     // surface the stall, not push detection out forever by restarting.
     if (_errorGraceTimer?.isActive ?? false) {
-      debugPrint('FILMKU_MPV_ERROR_GRACE_ALREADY_ARMED (keeping deadline)');
+      appLog('FILMKU_MPV_ERROR_GRACE_ALREADY_ARMED', '(keeping deadline)');
       return;
     }
     final posAtError = _lastPosition;
@@ -376,8 +379,10 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
           // timeout / open-error / pre-start error paths.
           _startupFailed('Playback error: $error');
         } else {
-          debugPrint('FILMKU_MPV_ERROR_STALLED '
-              '(no progress in ${_errorGracePeriod.inSeconds}s)');
+          appLog(
+            'FILMKU_MPV_ERROR_STALLED',
+            '(no progress in ${_errorGracePeriod.inSeconds}s) error=$error',
+          );
           _markFailed('Playback stalled: $error');
         }
       }
@@ -409,7 +414,7 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
         // is simply buffering its first frames.
         _sawPlaying = true;
         _startupWatchdog?.cancel();
-        debugPrint('FILMKU_MPV_PLAYING (position advanced past zero)');
+        appLog('FILMKU_MPV_PLAYING', '(position advanced past zero)');
       }
       if (position > _lastPosition) {
         _lastPosition = position;
@@ -425,7 +430,7 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
     setState(() {
       _failed = true;
     });
-    debugPrint('FILMKU_MPV_FAILED $detail');
+    appLog('FILMKU_MPV_FAILED', detail);
   }
 
   @override
