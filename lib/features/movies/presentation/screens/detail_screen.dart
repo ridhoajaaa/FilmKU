@@ -108,7 +108,10 @@ class _DetailContent extends ConsumerWidget {
         ),
         SliverToBoxAdapter(
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+            // Bottom 12 leaves a beat before the cast section — the cast
+            // chips are deliberately OUTSIDE the glass panel (glass-in-glass
+            // looked cloudy on iOS).
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
             // iOS: REAL liquid-glass info panel (shader-based GlassContainer)
             // under the backdrop — replaces the flat background. Android:
             // classic flat layout.
@@ -130,6 +133,16 @@ class _DetailContent extends ConsumerWidget {
                   ),
           ),
         ),
+        // Cast lives in its OWN sliver, OUTSIDE the glass info panel — its
+        // chips blur the raw background instead of the panel, so no cloudy
+        // glass-in-glass on iOS. Android visuals are unchanged (flat column).
+        if (details.cast.isNotEmpty)
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+              child: _CastSection(cast: details.cast),
+            ),
+          ),
         SliverToBoxAdapter(
           child: MovieListRow(
             title: 'Similar Movies',
@@ -144,7 +157,8 @@ class _DetailContent extends ConsumerWidget {
 }
 
 /// The scrollable info column under the backdrop: title, actions, genres,
-/// tagline, overview, and cast. Shared by the iOS glass panel and the classic
+/// tagline, overview. (Cast is rendered separately in its own sliver below,
+/// outside the glass panel.) Shared by the iOS glass panel and the classic
 /// flat layout.
 class _InfoColumn extends StatelessWidget {
   const _InfoColumn({
@@ -210,19 +224,6 @@ class _InfoColumn extends StatelessWidget {
             color: AppColors.textSecondary,
           ),
         ),
-        if (details.cast.isNotEmpty) ...[
-          const SizedBox(height: 24),
-          const Text(
-            'Top Cast',
-            style: TextStyle(
-              fontSize: 19,
-              fontWeight: FontWeight.w700,
-              color: AppColors.textPrimary,
-            ),
-          ),
-          const SizedBox(height: 12),
-          _CastRow(cast: details.cast),
-        ],
       ],
     );
   }
@@ -370,6 +371,35 @@ class _ActionRow extends StatelessWidget {
   }
 }
 
+/// The "Top Cast" section: title + horizontal chip row. Rendered in its own
+/// sliver on BOTH platforms — outside the glass info panel — so iOS chips
+/// blur the raw background instead of the panel (glass-in-glass looked
+/// cloudy). Android keeps the flat chips, visuals unchanged.
+class _CastSection extends StatelessWidget {
+  const _CastSection({required this.cast});
+
+  final List<CastMember> cast;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Top Cast',
+          style: TextStyle(
+            fontSize: 19,
+            fontWeight: FontWeight.w700,
+            color: AppColors.textPrimary,
+          ),
+        ),
+        const SizedBox(height: 12),
+        _CastRow(cast: cast),
+      ],
+    );
+  }
+}
+
 class _CastRow extends StatelessWidget {
   const _CastRow({required this.cast});
 
@@ -377,15 +407,22 @@ class _CastRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isIos = Theme.of(context).platform == TargetPlatform.iOS;
     return SizedBox(
-      height: 170,
+      // iOS: a little taller so the glass chips (avatar + padding) breathe.
+      height: isIos ? 190 : 170,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         itemCount: cast.length,
         separatorBuilder: (context, index) => const SizedBox(width: 12),
         itemBuilder: (context, index) {
           final member = cast[index];
-          return SizedBox(
+          // iOS: each cast member sits in a REAL liquid-glass chip
+          // (shader-based GlassContainer) — the frosted rounded panel frames
+          // the avatar + name + role on the raw background. Deliberately
+          // OUTSIDE the info panel so there's no glass-in-glass. Android
+          // keeps the classic flat chips.
+          final chip = SizedBox(
             width: 90,
             child: Column(
               children: [
@@ -439,6 +476,15 @@ class _CastRow extends StatelessWidget {
               ],
             ),
           );
+          return isIos
+              ? GlassContainer(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 12,
+                  ),
+                  child: chip,
+                )
+              : chip;
         },
       ),
     );

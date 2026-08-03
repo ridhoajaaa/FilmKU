@@ -101,22 +101,33 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
     return results.when(
       data: (movies) {
         if (movies.isEmpty) {
-          return Center(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(Icons.search_off,
-                    size: 56, color: AppColors.textMuted),
-                const SizedBox(height: 12),
-                Text(
-                  'No results for "$query"',
-                  style: const TextStyle(
-                    fontSize: 15,
-                    color: AppColors.textSecondary,
-                  ),
+          final isIos = Theme.of(context).platform == TargetPlatform.iOS;
+          // iOS: REAL liquid-glass card (shader-based) for the empty state.
+          final body = Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.search_off,
+                  size: 56, color: AppColors.textMuted),
+              const SizedBox(height: 12),
+              Text(
+                'No results for "$query"',
+                style: const TextStyle(
+                  fontSize: 15,
+                  color: AppColors.textSecondary,
                 ),
-              ],
-            ),
+              ),
+            ],
+          );
+          return Center(
+            child: isIos
+                ? GlassContainer(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 32,
+                      vertical: 28,
+                    ),
+                    child: body,
+                  )
+                : body,
           );
         }
         return GridView.builder(
@@ -152,6 +163,33 @@ class _EmptyState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // iOS: REAL liquid-glass card (shader-based). Others: plain centered copy.
+    if (Theme.of(context).platform == TargetPlatform.iOS) {
+      return const Center(
+        child: GlassContainer(
+          padding: EdgeInsets.symmetric(horizontal: 32, vertical: 28),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.search, size: 56, color: Colors.white38),
+              SizedBox(height: 12),
+              Text(
+                'Search any movie',
+                style: TextStyle(
+                  fontSize: 16,
+                  color: Colors.white70,
+                ),
+              ),
+              SizedBox(height: 4),
+              Text(
+                'Results appear as you type.',
+                style: TextStyle(fontSize: 13, color: Colors.white38),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
     return const Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,

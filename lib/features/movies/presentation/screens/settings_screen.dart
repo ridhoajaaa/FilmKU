@@ -108,56 +108,115 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               onTap: () => _editApiKey(settings.apiKey),
             ),
           const Divider(height: 24),
-          const _SectionTitle('Stream Extraction'),
-          SwitchListTile(
-            secondary: const Icon(Icons.dns, color: AppColors.accent),
-            title: const Text('Headless extraction'),
-            subtitle: const Text(
-              'Use an invisible WebView to find direct stream links when '
-              'the quick scan fails.',
-              style: TextStyle(color: AppColors.textMuted, fontSize: 12),
-            ),
-            value: settings.headlessExtraction,
-            onChanged: (value) => ref
-                .read(settingsProvider.notifier)
-                .setHeadlessExtraction(value),
-          ),
-          SwitchListTile(
-            secondary:
-                const Icon(Icons.play_circle_outline, color: AppColors.accent),
-            title: const Text('WebView fallback'),
-            subtitle: const Text(
-              'If no direct stream is found, open the source page in a '
-              'visible WebView (may show ads).',
-              style: TextStyle(color: AppColors.textMuted, fontSize: 12),
-            ),
-            value: settings.fallbackWebview,
-            onChanged: (value) =>
-                ref.read(settingsProvider.notifier).setFallbackWebview(value),
-          ),
-          const Divider(height: 24),
-          const _SectionTitle('Video Sources'),
-          ...SourceAggregator.extractors.map(
-            (extractor) => SwitchListTile(
-              secondary: const Icon(Icons.link, color: AppColors.accent),
-              title: Text(extractor.label),
-              subtitle: Text(
-                extractor.sourceId,
-                style:
-                    const TextStyle(color: AppColors.textMuted, fontSize: 12),
+          // iOS: REAL liquid-glass grouped section (shader-based
+          // GlassGroupedSection + GlassListTile with a trailing Switch) — the
+          // extraction toggles read as an iOS-26 grouped table. Android keeps
+          // the classic Material SwitchListTiles.
+          if (isIos)
+            GlassGroupedSection(
+              header: const _GlassSectionHeader('Stream Extraction'),
+              children: [
+                _glassSwitchTile(
+                  leading: const Icon(Icons.dns, color: Colors.white70),
+                  title: 'Headless extraction',
+                  subtitle: 'Use an invisible WebView to find direct stream '
+                      'links when the quick scan fails.',
+                  value: settings.headlessExtraction,
+                  onChanged: (value) => ref
+                      .read(settingsProvider.notifier)
+                      .setHeadlessExtraction(value),
+                ),
+                _glassSwitchTile(
+                  leading: const Icon(
+                    Icons.play_circle_outline,
+                    color: Colors.white70,
+                  ),
+                  title: 'WebView fallback',
+                  subtitle: 'If no direct stream is found, open the source '
+                      'page in a visible WebView (may show ads).',
+                  value: settings.fallbackWebview,
+                  onChanged: (value) => ref
+                      .read(settingsProvider.notifier)
+                      .setFallbackWebview(value),
+                ),
+              ],
+            )
+          else ...[
+            const _SectionTitle('Stream Extraction'),
+            SwitchListTile(
+              secondary: const Icon(Icons.dns, color: AppColors.accent),
+              title: const Text('Headless extraction'),
+              subtitle: const Text(
+                'Use an invisible WebView to find direct stream links when '
+                'the quick scan fails.',
+                style: TextStyle(color: AppColors.textMuted, fontSize: 12),
               ),
-              value: !_disabledSources.contains(extractor.sourceId),
-              onChanged: (value) => setState(() {
-                final service = SettingsService.instance;
-                if (value) {
-                  _disabledSources.remove(extractor.sourceId);
-                } else {
-                  _disabledSources.add(extractor.sourceId);
-                }
-                service.setSourceEnabled(extractor.sourceId, value);
-              }),
+              value: settings.headlessExtraction,
+              onChanged: (value) => ref
+                  .read(settingsProvider.notifier)
+                  .setHeadlessExtraction(value),
             ),
-          ),
+            SwitchListTile(
+              secondary: const Icon(Icons.play_circle_outline,
+                  color: AppColors.accent),
+              title: const Text('WebView fallback'),
+              subtitle: const Text(
+                'If no direct stream is found, open the source page in a '
+                'visible WebView (may show ads).',
+                style: TextStyle(color: AppColors.textMuted, fontSize: 12),
+              ),
+              value: settings.fallbackWebview,
+              onChanged: (value) =>
+                  ref.read(settingsProvider.notifier).setFallbackWebview(value),
+            ),
+          ],
+          const Divider(height: 24),
+          if (isIos)
+            GlassGroupedSection(
+              header: const _GlassSectionHeader('Video Sources'),
+              children: [
+                for (final extractor in SourceAggregator.extractors)
+                  _glassSwitchTile(
+                    leading: const Icon(Icons.link, color: Colors.white70),
+                    title: extractor.label,
+                    subtitle: extractor.sourceId,
+                    value: !_disabledSources.contains(extractor.sourceId),
+                    onChanged: (value) => setState(() {
+                      final service = SettingsService.instance;
+                      if (value) {
+                        _disabledSources.remove(extractor.sourceId);
+                      } else {
+                        _disabledSources.add(extractor.sourceId);
+                      }
+                      service.setSourceEnabled(extractor.sourceId, value);
+                    }),
+                  ),
+              ],
+            )
+          else ...[
+            const _SectionTitle('Video Sources'),
+            ...SourceAggregator.extractors.map(
+              (extractor) => SwitchListTile(
+                secondary: const Icon(Icons.link, color: AppColors.accent),
+                title: Text(extractor.label),
+                subtitle: Text(
+                  extractor.sourceId,
+                  style:
+                      const TextStyle(color: AppColors.textMuted, fontSize: 12),
+                ),
+                value: !_disabledSources.contains(extractor.sourceId),
+                onChanged: (value) => setState(() {
+                  final service = SettingsService.instance;
+                  if (value) {
+                    _disabledSources.remove(extractor.sourceId);
+                  } else {
+                    _disabledSources.add(extractor.sourceId);
+                  }
+                  service.setSourceEnabled(extractor.sourceId, value);
+                }),
+              ),
+            ),
+          ],
           const Divider(height: 24),
           const _SectionTitle('About'),
           // iOS: REAL liquid-glass row (shader-based GlassListTile).
@@ -217,4 +276,52 @@ class _SectionTitle extends StatelessWidget {
       ),
     );
   }
+}
+
+/// iOS-only header for [GlassGroupedSection] — same uppercase caption look as
+/// [_SectionTitle] but styled for the glass grouped table (iOS 26 settings).
+class _GlassSectionHeader extends StatelessWidget {
+  const _GlassSectionHeader(this.title);
+
+  final String title;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 4, bottom: 6),
+      child: Text(
+        title,
+        style: const TextStyle(
+          fontSize: 13,
+          fontWeight: FontWeight.w700,
+          letterSpacing: 1.1,
+          color: Color(0xFF9E9EA8),
+        ),
+      ),
+    );
+  }
+}
+
+/// Builds an iOS glass row with a trailing [Switch] (the GlassGroupedSection
+/// equivalent of a Material [SwitchListTile]).
+Widget _glassSwitchTile({
+  required Widget leading,
+  required String title,
+  required String subtitle,
+  required bool value,
+  required ValueChanged<bool> onChanged,
+}) {
+  return GlassListTile(
+    leading: leading,
+    title: Text(title),
+    subtitle: Text(
+      subtitle,
+      style: const TextStyle(fontSize: 12, color: Colors.white54),
+    ),
+    trailing: Switch(
+      value: value,
+      onChanged: onChanged,
+    ),
+    onTap: () => onChanged(!value),
+  );
 }

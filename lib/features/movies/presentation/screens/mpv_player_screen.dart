@@ -99,6 +99,14 @@ class MpvPlayerScreen extends StatefulWidget {
   }) =>
       playing && sawPlaying && currentPosition == lastWatchPosition;
 
+  /// How long the "switching to backup player…" notice stays up before the
+  /// screen auto-pops with `failed=true` (so [PlayerScreen] continues in the
+  /// visible WebView fallback — which is proven to actually play these CDN
+  /// streams — instead of parking on a dead-end error UI over a loading
+  /// player). Exposed for tests.
+  @visibleForTesting
+  static const Duration failoverNoticeDuration = Duration(milliseconds: 1500);
+
   @override
   State<MpvPlayerScreen> createState() => _MpvPlayerScreenState();
 }
@@ -107,6 +115,14 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
   late final Player _player;
   late final VideoController _videoController;
   bool _failed = false;
+
+  /// True when [_failed] came from a stream that NEVER started (startup
+  /// timeout / open error) and the screen is auto-failing-over to the backup
+  /// player: build shows a brief "switching…" notice (with Retry suppressed —
+  /// retrying the same dead URL is pointless) instead of the full error UI,
+  /// then pops with `failed=true`. Mid-play failures (silent freeze, error
+  /// stall) keep the full error UI with Retry.
+  bool _autoFailover = false;
   StreamSubscription<String>? _errorSub;
   StreamSubscription<bool>? _playingSub;
   StreamSubscription<Duration>? _positionSub;
@@ -123,6 +139,8 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
   /// blocked CDN) instead of leaving a black screen forever.
   static const Duration _startupTimeout = Duration(seconds: 12);
   Timer? _startupWatchdog;
+
+  Timer? _failoverTimer;
 
   /// When an error arrives WHILE playback is progressing, this grace window
   /// distinguishes a transient hiccup (position keeps advancing → ignore)
@@ -201,13 +219,15 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
         await _player.seek(widget.args.startAt);
       }
       debugPrint('FILMKU_MPV_OPENED');
-      // If the stream never starts playing, surface the failure so the user
-      // can retry / go back to the WebView instead of staring at black.
+      // If the stream never starts playing, auto-failover to the backup
+      // player instead of staring at black: a brief notice, then pop with
+      // failed=true so PlayerScreen continues in the visible WebView (which
+      // is proven to play these CDN streams on-device).
       _startupWatchdog?.cancel();
       _startupWatchdog = Timer(_startupTimeout, () {
         if (mounted && !_sawPlaying) {
           debugPrint('FILMKU_MPV_STARTUP_TIMEOUT (no playback in 12s)');
-          _markFailed('Stream did not start playing.');
+          _startupFailed('Stream did not start playing.');
         }
       });
       // Periodic progress watchdog: catches a stream that dies silently
@@ -239,8 +259,32 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
       });
     } catch (e) {
       debugPrint('FILMKU_MPV_OPEN_ERROR $e');
-      _markFailed('Failed to open stream.');
+      // Open threw (bad/unsupported URL) — the stream can never start, so
+      // auto-failover to the backup player rather than a dead-end error UI.
+      _startupFailed('Failed to open stream.');
     }
+  }
+
+  /// Auto-fails a stream that never started (startup timeout / open error).
+  ///
+  /// Shows a short "switching to backup player…" notice, then pops with
+  /// `failed=true` so [PlayerScreen] continues in the visible WebView
+  /// fallback — the path proven to actually play these CDN streams on-device
+  /// (the user's iOS flow: mpv direct URL loads forever → WebView plays →
+  /// hands back to mpv with a working captured URL). Without this the screen
+  /// parked on the full error UI over a still-loading player and required a
+  /// manual tap to escape.
+  void _startupFailed(String detail) {
+    if (!mounted || _failed) return;
+    setState(() {
+      _failed = true;
+      _autoFailover = true;
+    });
+    debugPrint('FILMKU_MPV_STARTUP_FAIL $detail');
+    _failoverTimer?.cancel();
+    _failoverTimer = Timer(MpvPlayerScreen.failoverNoticeDuration, () {
+      if (mounted) _close(failed: true);
+    });
   }
 
   void _listenForErrors() {
@@ -262,7 +306,13 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
       sawPlaying: _sawPlaying,
       lastPosition: _lastPosition,
     )) {
-      _markFailed('Playback error: $error');
+      // Stream NEVER started (no playing event, no position) — e.g. the
+      // signed CDN URL is rejected/refused before the 12s watchdog fires.
+      // Auto-failover to the backup player instead of parking the full
+      // "Native playback failed" UI over a still-loading player (the exact
+      // symptom reported on iOS 2026-08). Consistent with the watchdog and
+      // open-error paths.
+      _startupFailed('Playback error: $error');
       return;
     }
     debugPrint('FILMKU_MPV_ERROR_GRACE_START (waiting for progress)');
@@ -335,6 +385,7 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
     _startupWatchdog?.cancel();
     _silentFreezeWatchdog?.cancel();
     _errorGraceTimer?.cancel();
+    _failoverTimer?.cancel();
     _errorSub?.cancel();
     _playingSub?.cancel();
     _positionSub?.cancel();
@@ -421,13 +472,41 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
                   ],
                 ),
               ),
-              if (_failed)
+              if (_failed && _autoFailover)
+                // Stream never started — auto-switching to the backup player.
+                // Compact notice (NOT the full error UI) so the user isn't
+                // parked on a dead-end error over a still-loading player.
+                const ColoredBox(
+                  color: Colors.black87,
+                  child: Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        CircularProgressIndicator(color: Colors.white70),
+                        SizedBox(height: 14),
+                        Text(
+                          'Stream tidak dapat dimulai — '
+                          'beralih ke pemutar cadangan…',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 14,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              if (_failed && !_autoFailover)
                 Center(
                   child: ErrorView(
                     message:
                         'Native playback failed for ${widget.args.sourceLabel}.',
                     onRetry: () {
-                      setState(() => _failed = false);
+                      setState(() {
+                        _failed = false;
+                        _autoFailover = false;
+                      });
                       _open();
                     },
                     secondaryLabel: 'Back to WebView',

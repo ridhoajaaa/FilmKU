@@ -66,9 +66,17 @@ class AppShell extends StatelessWidget {
           // they can assert scrolled content never hides behind the bar.
           key: const Key('ios_glass_tab_bar'),
           tabs: const [
+            // NOTE: no `activeIcon` on ANY tab. GlassTabBar.bottom renders a
+            // selected-variant layer OVER the unselected layer for the tabs
+            // adjacent to the indicator — with Home selected that layer draws
+            // `home_rounded` on top of `home_outlined` → the Home tab looked
+            // visibly DOUBLED. Search (identical glyph both states) looked
+            // fine, which is why the doubling was only ever on Home. Reusing
+            // the same icon for both states makes the overlap invisible;
+            // selection is still shown by the indicator pill + selected
+            // color + per-tab glow.
             GlassTab(
               icon: Icon(Icons.home_outlined),
-              activeIcon: Icon(Icons.home_rounded),
               label: 'Home',
               glowColor: Color(0x33FFFFFF),
             ),
@@ -80,12 +88,10 @@ class AppShell extends StatelessWidget {
             // two platforms read the same (2026-08 user request).
             GlassTab(
               icon: Icon(Icons.bookmark_outline_rounded),
-              activeIcon: Icon(Icons.bookmark_rounded),
               label: 'Watchlist',
             ),
             GlassTab(
               icon: Icon(Icons.settings_outlined),
-              activeIcon: Icon(Icons.settings_rounded),
               label: 'Settings',
             ),
           ],

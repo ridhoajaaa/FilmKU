@@ -389,6 +389,106 @@ flutter doctor   # Android toolchain should be green
 
 ## 📝 Changelog
 
+### `2026-08-03` — v1.3.4: Detail cast chips separated from the glass info panel (no more cloudy glass-in-glass)
+
+- **Glass-in-glass fixed on iOS Detail.** The "Top Cast" section (title + chips)
+  now renders in its OWN sliver, OUTSIDE the liquid-glass info panel. The cast
+  chips blur the raw dark background instead of the panel — no more double-
+  blur cloudiness. Android visuals unchanged (flat column, same split).
+- Version bumped to **1.3.4+1** (`pubspec.yaml` +
+  `AppConstants.appVersion`).
+
+### `2026-08-03` — v1.3.3: grid scroll-stress tests prove glass grids stay lazy & clean
+
+- **New `test/grid_scroll_perf_test.dart`** (2 widget tests) that actually
+  exercise the iOS glass grid under load, not just audit it:
+  1. **Laziness proof** — a 60-movie `GridView.builder` of glass `MovieCard`s
+     builds only the visible row (`find.byType(MovieCard)` ≪ 60); eager
+     building (the real scroll killer) would fail this instantly.
+  2. **Clean-scroll proof** — scrolls deterministically to the last row and
+     asserts no layout overflow / exceptions were raised (the test framework
+     fails automatically otherwise) and that off-screen cards are recycled
+     (card #0 leaves the tree; card #59 is present).
+- Version bumped to **1.3.3+1** (`pubspec.yaml` +
+  `AppConstants.appVersion`).
+
+  > **Honesty note:** these tests prove *structural* health (lazy building,
+  > no overflow during scroll, recycling) — they do **not** measure frame
+  > time. Real smoothness numbers need an on-device
+  > `flutter run --profile` + DevTools Performance timeline.
+
+### `2026-08-03` — v1.3.2: grid scroll perf hardening for glass cards (iOS)
+
+- **Perf audit of the glass grid.** Verified the stack is already scroll-safe
+  by design: cards use the lightweight shader tier (standard, 5–10× faster
+  than `BackdropFilter` and safe while scrolling), grids are lazy
+  (`GridView.builder`), and all `GlassContainer`s share one grouped layer
+  instead of each creating its own backdrop.
+- **Hardened it so it stays fast.** Each iOS `MovieCard` now pins
+  `quality: GlassQuality.standard` explicitly (widget-level quality wins over
+  any inherited premium layer, so a future glassy screen can't silently make
+  grids heavy). Each card also carries a keyed `RepaintBoundary` as
+  defense-in-depth on top of the list delegate's own per-item boundaries —
+  neighbour image loads / hero animations repaint only that card.
+- **Perf-regression guards.** `test/movie_card_glass_test.dart` now asserts
+  the card glass is pinned to `standard` quality AND that the keyed
+  `RepaintBoundary` still exists on iOS (would fail if either is removed).
+- Version bumped to **1.3.2+1** (`pubspec.yaml` +
+  `AppConstants.appVersion`).
+
+### `2026-08-03` — v1.3.1: liquid glass on movie cards & detail cast (iOS)
+
+- **Movie cards are now glass.** Every `MovieCard` (Home rows, Search grid,
+  Watchlist grid) wraps in a shader-based `GlassContainer` on iOS — the
+  frosted rounded rim frames the poster + title + rating, so the whole movie
+  wall reads as one glass system. Android keeps the classic flat card.
+  Verified platform-split by `test/movie_card_glass_test.dart` (iOS:
+  `GlassContainer` present; Android: absent).
+- **Detail cast chips are glass.** Each cast member in the Detail screen's
+  "Top Cast" row sits in a REAL liquid-glass chip (avatar + name + role),
+  matching the glass info panel above; the row gets a touch more height so
+  the chips breathe. Android untouched.
+- Version bumped to **1.3.1+1** (`pubspec.yaml` +
+  `AppConstants.appVersion`).
+
+### `2026-08-03` — v1.3.0: doubled Home tab fixed, more liquid glass, mpv startup auto-failover (no dead-end error over loading player)
+
+- **Doubled Home tab in the floating glass bar fixed (root cause).**
+  `GlassTabBar.bottom` renders a selected-variant layer OVER the unselected
+  layer for the tabs adjacent to the indicator. The Home tab was the only one
+  with a DISTINCT `activeIcon` (`home_rounded` over `home_outlined`) — the two
+  different glyphs overlapped and looked visibly DOUBLED, while Search (same
+  glyph both states) looked fine. Watchlist/Settings sit outside the
+  indicator's affected range, so they never doubled. Fix: dropped `activeIcon`
+  from ALL tabs — the same icon renders in both layers, the overlap is
+  invisible, and selection is still shown by the indicator pill + selected
+  color + per-tab glow. (`app_shell.dart`)
+- **More liquid glass (iOS only).** Beyond the existing header / tab bar /
+  search field / detail panel / watchlist empty state:
+  - **Settings** — the Stream Extraction toggles and Video Sources list now
+    render as REAL glass grouped sections
+    (`GlassGroupedSection` + `GlassListTile` + trailing `Switch`), the iOS-26
+    grouped-table look (Android keeps Material `SwitchListTile`).
+  - **Section titles** — MovieListRow titles (Popular / Top Rated / Upcoming
+    on Home, Similar Movies on Detail) sit in small glass chips.
+  - **Search** — empty state and "no results" cards are now glass.
+  - **Home setup banner** — the "TMDB API Key missing" banner is a real
+    `GlassContainer` instead of the hand-rolled frosted approximation.
+- **mpv startup dead-end fixed (iOS: "movie only loads, then error over it").**
+  When the direct-extraction URL never starts (signed CDN URLs need the
+  WebView's session), the screen used to park on the full "Native playback
+  failed" error UI over a still-loading player, requiring a manual tap. Now:
+  - `MpvPlayerScreen` shows a brief "Stream tidak dapat dimulai — beralih ke
+    pemutar cadangan…" notice (1.5s) and **auto-pops with `failed=true`** —
+    no dead-end error UI.
+  - `PlayerScreen` re-arms auto-handoff on the **first** mpv failure: the
+    WebView fallback captures the URL it actually plays (proven to work in
+    mpv) and hands it back to the native player. A **second** failure keeps
+    auto-handoff disabled so the user stays in the WebView (no infinite
+    mpv ↔ WebView bounce). Tested via
+    `PlayerScreen.shouldReArmAutoHandoff` + `failoverNoticeDuration`.
+- Version bumped to **1.3.0+1** (`pubspec.yaml` + `AppConstants.appVersion`).
+
 ### `2026-08-02` — v1.2.1: iOS native playback fixed (CDN headers), real liquid glass on every screen, Watchlist tab unified, neutral (no-blue) iOS theme
 
 - **iOS playback root cause fixed: mpv now sends CDN HTTP headers.** The signed

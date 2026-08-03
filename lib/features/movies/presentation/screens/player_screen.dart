@@ -85,6 +85,20 @@ class PlayerScreen extends ConsumerStatefulWidget {
     return next < length ? next : null;
   }
 
+  /// Whether the WebView fallback opened after an mpv failure should have
+  /// auto-handoff re-armed so it can hand a WORKING captured URL back to the
+  /// native player.
+  ///
+  /// 2026-08 on-device evidence: the direct-extraction URL often loads forever
+  /// in mpv (the signed CDN URL needs the WebView's session), yet the URL the
+  /// WebView actually plays DOES play in mpv. So the FIRST mpv failure re-arms
+  /// auto-handoff — the WebView captures the working URL and playback
+  /// continues natively after all. A SECOND failure disables it so the user
+  /// stays in the WebView instead of an infinite mpv ↔ WebView bounce.
+  /// Exposed for tests.
+  @visibleForTesting
+  static bool shouldReArmAutoHandoff(int mpvFailCount) => mpvFailCount == 1;
+
   /// Maximum number of providers the hidden auto-capture tries before giving
   /// up and auto-opening the visible WebView.
   ///
@@ -160,6 +174,14 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
     return _autoCaptureCandidates[_autoCaptureIndex];
   }
 
+  /// How many times mpv has failed THIS movie session. The FIRST mpv startup
+  /// failure auto-failovers to the visible WebView with auto-handoff RE-ARMED
+  /// (the WebView captures the REAL playable URL — which is proven to play in
+  /// mpv — and hands it back to the native player). Only a SECOND failure
+  /// disables auto-handoff so the user stays in the WebView instead of an
+  /// infinite mpv ↔ WebView bounce.
+  int _mpvFailCount = 0;
+
   @override
   void initState() {
     super.initState();
@@ -194,6 +216,8 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
     setState(() {
       _loading = true;
       _error = null;
+      // A fresh load = a fresh playback session (Retry after a failure).
+      _mpvFailCount = 0;
     });
     try {
       final sources =
@@ -356,14 +380,24 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
     );
     if (!mounted) return;
     if (failed == true) {
-      // Native playback failed — return to the WebView seamlessly, with
-      // auto-handoff DISABLED so the WebView doesn't immediately bounce
-      // back into the failing native player (loop).
+      // Native playback failed — return to the WebView seamlessly.
+      //
+      // FIRST failure: auto-handoff stays ENABLED. On-device evidence
+      // (2026-08, iOS): the direct-extraction URL often loads forever in mpv
+      // (the signed CDN URL needs the WebView's session), yet the URL the
+      // WebView actually plays DOES play in mpv. Re-arming auto-handoff here
+      // lets the WebView capture that working URL and hand it back to the
+      // native player — the movie ends up playing in mpv after all.
+      // SECOND failure: auto-handoff DISABLED so the user stays in the
+      // WebView instead of an infinite mpv ↔ WebView bounce.
+      _mpvFailCount++;
+      final autoHandoff =
+          PlayerScreen.shouldReArmAutoHandoff(_mpvFailCount);
       debugPrint(
         'FILMKU_MPV_FAILED_RETURN_WEBVIEW source=${source.sourceId} '
-        'autoHandoff=false',
+        'failCount=$_mpvFailCount autoHandoff=$autoHandoff',
       );
-      await _openWebViewFallback(source, autoHandoff: false);
+      await _openWebViewFallback(source, autoHandoff: autoHandoff);
     } else {
       // The user finished/closed the native playback — leave the player
       // instead of lingering on the stale "no playable stream" error screen.

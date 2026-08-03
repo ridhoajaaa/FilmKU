@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 
 import '../../../../core/theme/app_colors.dart';
 import '../../domain/entities/movie.dart';
@@ -25,14 +26,33 @@ class MovieListRow extends ConsumerWidget {
       children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 20, 16, 10),
-          child: Text(
-            title,
-            style: const TextStyle(
-              fontSize: 19,
-              fontWeight: FontWeight.w700,
-              color: AppColors.textPrimary,
-            ),
-          ),
+          // iOS: the section title sits in a small REAL liquid-glass chip
+          // (shader-based GlassContainer) — used on Home (Popular / Top
+          // Rated / Upcoming) and Detail (Similar Movies). Android keeps the
+          // classic flat heading.
+          child: Theme.of(context).platform == TargetPlatform.iOS
+              ? GlassContainer(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 6,
+                  ),
+                  child: Text(
+                    title,
+                    style: const TextStyle(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.textPrimary,
+                    ),
+                  ),
+                )
+              : Text(
+                  title,
+                  style: const TextStyle(
+                    fontSize: 19,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
         ),
         SizedBox(
           height: 215,

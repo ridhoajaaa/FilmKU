@@ -133,6 +133,22 @@ void main() {
     });
   });
 
+  group('MpvPlayerScreen startup auto-failover', () {
+    test('failover notice is brief (not another dead-end wait)', () {
+      // The "switching to backup player…" notice must be short — the point is
+      // to escape the dead-end mpv loading state fast, then pop into the
+      // WebView fallback automatically.
+      expect(
+        MpvPlayerScreen.failoverNoticeDuration,
+        const Duration(milliseconds: 1500),
+      );
+      expect(
+        MpvPlayerScreen.failoverNoticeDuration,
+        lessThan(const Duration(seconds: 3)),
+      );
+    });
+  });
+
   group('WebViewPlayerScreen.shouldShowTapToPlay', () {
     test('paused video + no native stream + not yet tapped => show', () {
       expect(

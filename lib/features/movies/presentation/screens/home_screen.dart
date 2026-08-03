@@ -175,60 +175,70 @@ class _ApiKeyBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isIos = Theme.of(context).platform == TargetPlatform.iOS;
-    final content = Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-      decoration: BoxDecoration(
-        // iOS: frosted glass chip; Android: solid accent-tinted card.
-        color: isIos ? const Color(0x1AFFB02E) : const Color(0xFF3A2E0A),
-        borderRadius: BorderRadius.circular(isIos ? 20 : 14),
-        border: Border.all(
-          color: isIos ? const Color(0x33FFB02E) : const Color(0x66FFB02E),
-        ),
-      ),
-      child: Row(
-        children: [
-          const Icon(Icons.warning_amber_rounded, color: Color(0xFFFFB02E)),
-          const SizedBox(width: 12),
-          const Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'TMDB API Key missing',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w700,
-                    fontSize: 14,
-                  ),
-                ),
-                SizedBox(height: 2),
-                Text(
-                  'Add your key to load movies',
-                  style: TextStyle(color: Colors.white70, fontSize: 12),
-                ),
-              ],
+    // iOS: REAL liquid-glass chip (shader-based GlassContainer) — replaces
+    // the old hand-rolled frosted approximation, so the setup banner reads as
+    // part of the same glass system as the header/tab bar. Android: solid
+    // accent-tinted card.
+    final content = isIos
+        ? GlassContainer(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            child: _bannerRow(onOpenSettings),
+          )
+        : Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            decoration: BoxDecoration(
+              color: const Color(0xFF3A2E0A),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: const Color(0x66FFB02E)),
             ),
-          ),
-          const SizedBox(width: 8),
-          FilledButton(
-            style: FilledButton.styleFrom(
-              backgroundColor: const Color(0xFFFFB02E),
-              foregroundColor: const Color(0xFF1A1200),
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              textStyle: const TextStyle(
-                fontWeight: FontWeight.w800,
-                fontSize: 13,
-              ),
-            ),
-            onPressed: onOpenSettings,
-            child: const Text('Add key'),
-          ),
-        ],
-      ),
-    );
+            child: _bannerRow(onOpenSettings),
+          );
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
       child: content,
+    );
+  }
+
+  Widget _bannerRow(VoidCallback onOpenSettings) {
+    return Row(
+      children: [
+        const Icon(Icons.warning_amber_rounded, color: Color(0xFFFFB02E)),
+        const SizedBox(width: 12),
+        const Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'TMDB API Key missing',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 14,
+                ),
+              ),
+              SizedBox(height: 2),
+              Text(
+                'Add your key to load movies',
+                style: TextStyle(color: Colors.white70, fontSize: 12),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: 8),
+        FilledButton(
+          style: FilledButton.styleFrom(
+            backgroundColor: const Color(0xFFFFB02E),
+            foregroundColor: const Color(0xFF1A1200),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            textStyle: const TextStyle(
+              fontWeight: FontWeight.w800,
+              fontSize: 13,
+            ),
+          ),
+          onPressed: onOpenSettings,
+          child: const Text('Add key'),
+        ),
+      ],
     );
   }
 }

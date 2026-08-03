@@ -217,6 +217,23 @@ void main() {
     });
   });
 
+  group('PlayerScreen.shouldReArmAutoHandoff (mpv failure loop guard)', () {
+    test('first mpv failure re-arms auto-handoff (WebView can capture a '
+        'working URL and hand it back to the native player)', () {
+      expect(PlayerScreen.shouldReArmAutoHandoff(1), isTrue);
+    });
+
+    test('second mpv failure disables auto-handoff (no infinite bounce)', () {
+      expect(PlayerScreen.shouldReArmAutoHandoff(2), isFalse);
+      expect(PlayerScreen.shouldReArmAutoHandoff(3), isFalse);
+      expect(PlayerScreen.shouldReArmAutoHandoff(99), isFalse);
+    });
+
+    test('no failure yet → nothing to re-arm', () {
+      expect(PlayerScreen.shouldReArmAutoHandoff(0), isFalse);
+    });
+  });
+
   group('WebViewPlayerScreen error surfacing (main-frame + URL match)', () {
     test('load error surfaces only for the main document at the original URL',
         () {
