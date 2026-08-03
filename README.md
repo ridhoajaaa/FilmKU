@@ -389,6 +389,26 @@ flutter doctor   # Android toolchain should be green
 
 ## 📝 Changelog
 
+### `2026-08-03` — v1.3.8: neutralise `disable-devtool` — 2Embed.skin finally captures on iOS
+
+**On-device evidence (iOS syslog 2026-08-03):** 2embed.skin's embed + player pages
+load the `disable-devtool` anti-debug script (`cdn.jsdelivr.net/npm/disable-devtool`).
+In a WKWebView the library FALSE-POSITIVES "devtools opened" — iOS
+`innerWidth`/`outerWidth` differ in landscape/immersive — and redirects the page
+to `theajack.github.io/disable-devtool/404.html?h=...`, killing the player. The
+hidden auto-capture then timed out on every provider on iOS (`NSURLErrorDomain
+-999` on the 404 redirect) while Android (equal widths) never tripped it — which
+is exactly why 2Embed.skin (the source that plays natively on Android) never
+captured on iOS.
+
+- **`disable-devtool` script + `theajack.github.io` 404 redirect are now
+  blocked** in the hidden auto-capture WebView, the visible WebView fallback
+  AND the headless extractor: the script is answered with an empty 204 and the
+  redirect navigation is cancelled — the 2embed player runs normally, its
+  `.m3u8` gets captured, and playback jumps straight into libmpv natively.
+- New shared `embedIsDisableDevtoolUrl` guard + 2 unit tests. **153/153 pass,
+  analyze clean.**
+
 ### `2026-08-03` — v1.3.7: iOS native playback root-cause fix — VidLink URLs are WebView-only, never feed them to mpv
 
 **On-device evidence (iOS syslog 2026-08-03):** VidLink's signed URL carries an EMPTY

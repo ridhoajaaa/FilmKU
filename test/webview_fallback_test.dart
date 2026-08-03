@@ -334,6 +334,60 @@ void main() {
     });
   });
 
+  group('disable-devtool neutralization (2embed iOS capture fix)', () {
+    test('flags the disable-devtool script URL and its 404 redirect host', () {
+      expect(
+        embedIsDisableDevtoolUrl(
+          'https://cdn.jsdelivr.net/npm/disable-devtool@latest',
+        ),
+        isTrue,
+      );
+      expect(
+        embedIsDisableDevtoolUrl(
+          'https://theajack.github.io/disable-devtool/404.html'
+          '?h=www.2embed.skin',
+        ),
+        isTrue,
+      );
+      expect(
+        WebViewPlayerScreen.isDisableDevtoolUrl(
+          'https://cdn.jsdelivr.net/npm/disable-devtool@latest',
+        ),
+        isTrue,
+      );
+      // The data-layer copy used by the headless extractor must agree.
+      expect(
+        StreamSourceDataSource.isDisableDevtoolUrl(
+          'https://cdn.jsdelivr.net/npm/disable-devtool@latest',
+        ),
+        isTrue,
+      );
+      expect(
+        StreamSourceDataSource.isDisableDevtoolUrl(
+          'https://theajack.github.io/disable-devtool/404.html?h=x',
+        ),
+        isTrue,
+      );
+    });
+
+    test('never flags real source/player/media URLs', () {
+      expect(embedIsDisableDevtoolUrl('https://www.2embed.skin/e/1'), isFalse);
+      expect(
+        embedIsDisableDevtoolUrl('https://streamsrcs.2embed.cc/swish?id=x'),
+        isFalse,
+      );
+      expect(
+        embedIsDisableDevtoolUrl('https://cdn.example.com/player.js'),
+        isFalse,
+      );
+      expect(
+        embedIsDisableDevtoolUrl('https://cdn.example.com/master.m3u8'),
+        isFalse,
+      );
+      expect(embedIsDisableDevtoolUrl(''), isFalse);
+    });
+  });
+
   group('StreamCaptureCore shared helpers', () {
     test('embedIsMediaUrl captures .m3u8/.mp4 with query & fragment', () {
       expect(embedIsMediaUrl('https://cdn.example.com/hls/index.m3u8'), isTrue);

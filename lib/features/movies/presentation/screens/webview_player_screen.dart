@@ -105,6 +105,12 @@ class WebViewPlayerScreen extends StatefulWidget {
   static bool isAdHost(String host) =>
       _adHostFragments.any((fragment) => host.contains(fragment));
 
+  /// Whether a URL belongs to the `disable-devtool` anti-debug script or its
+  /// 404-redirect host (`theajack.github.io`) — which false-positives on iOS
+  /// WKWebView and kills 2embed's player. Exposed for tests.
+  @visibleForTesting
+  static bool isDisableDevtoolUrl(String url) => embedIsDisableDevtoolUrl(url);
+
   /// Whether a `<video>` URL discovered in the WebView can be handed off to
   /// the native player. Delegates to the shared [embedIsNativeStreamCandidate]
   /// (also used by the hidden auto-capture). Exposed for tests.
@@ -687,23 +693,43 @@ class _WebViewPlayerScreenState extends State<WebViewPlayerScreen> {
                     );
                   },
                   // Main-frame navigations to ad landing pages (the "tap
-                  // anywhere → ad" hijack) are cancelled before they start.
+                  // anywhere → ad" hijack) and the disable-devtool 404
+                  // redirect (kills 2embed's player on iOS WKWebView) are
+                  // cancelled before they start.
                   shouldOverrideUrlLoading:
                       (controller, navigationAction) async {
                     final target = navigationAction.request.url;
                     if (target != null &&
-                        WebViewPlayerScreen.isAdHost(target.host)) {
+                        (WebViewPlayerScreen.isAdHost(target.host) ||
+                            WebViewPlayerScreen.isDisableDevtoolUrl(
+                                target.toString()))) {
                       return NavigationActionPolicy.CANCEL;
                     }
                     return NavigationActionPolicy.ALLOW;
                   },
                   // Ad/tracker sub-resources are answered with an empty 204 so
-                  // their scripts never reach the page. Plain .m3u8/.mp4 media
-                  // loads (also from inside iframes) are captured for native
-                  // handoff. Everything else loads normally (return null).
+                  // their scripts never reach the page — including the
+                  // disable-devtool anti-debug script, which false-positives
+                  // on iOS WKWebView and redirects 2embed's player to a 404.
+                  // Plain .m3u8/.mp4 media loads (also from inside iframes)
+                  // are captured for native handoff. Everything else loads
+                  // normally (return null).
                   shouldInterceptRequest: (controller, request) async {
                     final url = request.url.toString();
                     final host = request.url.host;
+                    if (WebViewPlayerScreen.isDisableDevtoolUrl(url)) {
+                      _adBlocked++;
+                      debugPrint(
+                        'FILMKU_WEBVIEW_BLOCK_DEVTOOL url=$url total=$_adBlocked',
+                      );
+                      return WebResourceResponse(
+                        contentType: 'text/plain',
+                        contentEncoding: 'utf-8',
+                        statusCode: 204,
+                        reasonPhrase: 'Blocked by FilmKU',
+                        data: Uint8List(0),
+                      );
+                    }
                     if (WebViewPlayerScreen.isAdHost(host)) {
                       _adBlocked++;
                       debugPrint(

@@ -371,19 +371,36 @@ class _HiddenStreamCaptureState extends State<HiddenStreamCapture> {
             'url=${widget.url}',
           );
         },
-        // Main-frame navigations to ad landing pages are cancelled.
+        // Main-frame navigations to ad landing pages are cancelled — and the
+        // disable-devtool 404 redirect (theajack.github.io) that kills
+        // 2embed's player on iOS WKWebView is cancelled too (see
+        // [embedIsDisableDevtoolUrl]).
         shouldOverrideUrlLoading: (controller, navigationAction) async {
           final target = navigationAction.request.url;
-          if (target != null && embedIsAdHost(target.host)) {
+          if (target != null &&
+              (embedIsAdHost(target.host) ||
+                  embedIsDisableDevtoolUrl(target.toString()))) {
             return NavigationActionPolicy.CANCEL;
           }
           return NavigationActionPolicy.ALLOW;
         },
-        // Ad sub-resources answered with an empty 204; .m3u8/.mp4 media
+        // Ad sub-resources answered with an empty 204; the disable-devtool
+        // anti-debug script is neutered the same way (it false-positives on
+        // iOS WKWebView and redirects the player to a 404); .m3u8/.mp4 media
         // loads are captured for native playback.
         shouldInterceptRequest: (controller, request) async {
           final url = request.url.toString();
           final host = request.url.host;
+          if (embedIsDisableDevtoolUrl(url)) {
+            debugPrint('FILMKU_AUTOCAPTURE_BLOCK_DEVTOOL url=$url');
+            return WebResourceResponse(
+              contentType: 'text/plain',
+              contentEncoding: 'utf-8',
+              statusCode: 204,
+              reasonPhrase: 'Blocked by FilmKU',
+              data: Uint8List(0),
+            );
+          }
           if (embedIsAdHost(host)) {
             debugPrint('FILMKU_AUTOCAPTURE_ADBLOCK host=$host');
             return WebResourceResponse(

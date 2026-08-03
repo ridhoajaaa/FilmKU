@@ -1,5 +1,7 @@
 import 'package:flutter/foundation.dart';
 
+import '../../data/datasources/stream_source_datasource.dart';
+
 /// A direct stream URL discovered inside an embed WebView (visible fallback
 /// or hidden auto-capture), handed to the native (libmpv) player.
 @immutable
@@ -88,6 +90,25 @@ const List<String> embedAdHostFragments = [
 /// Whether a request host targets a known ad network.
 bool embedIsAdHost(String host) =>
     embedAdHostFragments.any((fragment) => host.contains(fragment));
+
+/// Whether a URL belongs to the `disable-devtool` anti-debugging script or
+/// its 404-redirect host.
+///
+/// On-device evidence (2026-08, iOS): 2embed.skin's embed + player pages load
+/// `disable-devtool` (`https://cdn.jsdelivr.net/npm/disable-devtool@latest`).
+/// In a WKWebView the library FALSE-POSITIVES "devtools opened" (iOS
+/// `innerWidth`/`outerWidth` differ in immersive/landscape mode) and
+/// redirects the page to `theajack.github.io/disable-devtool/404.html?h=...`,
+/// killing the player — the hidden capture then times out on every provider
+/// on iOS while Android (equal widths) never trips it. Blocking the script
+/// (204) and cancelling the redirect navigation lets the player run normally.
+///
+/// Single source of truth lives on
+/// [StreamSourceDataSource.isDisableDevtoolUrl] (data layer — the headless
+/// extractor needs it there); this presentation-side alias keeps the capture
+/// WebViews consistent with it.
+bool embedIsDisableDevtoolUrl(String url) =>
+    StreamSourceDataSource.isDisableDevtoolUrl(url);
 
 /// Whether a `<video>` URL can be handed to the native player: a plain
 /// http(s) media URL — not MSE `blob:`, and not the embed page itself.

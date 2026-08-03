@@ -275,7 +275,20 @@ class HeadlessStreamExtractor {
         // like vidsrc.to → vsembed.ru → cloudorchestranova.com.
         shouldInterceptRequest: (controller, request) async {
           // `request.url` is a non-nullable WebUri in this API version.
-          capture(request.url.toString());
+          final u = request.url.toString();
+          // The disable-devtool anti-debug script kills 2embed's player on iOS
+          // WKWebView (false-positive redirect to a 404) — answer it with an
+          // empty 204 so the page's player runs normally.
+          if (StreamSourceDataSource.isDisableDevtoolUrl(u)) {
+            return WebResourceResponse(
+              contentType: 'text/plain',
+              contentEncoding: 'utf-8',
+              statusCode: 204,
+              reasonPhrase: 'Blocked by FilmKU',
+              data: Uint8List(0),
+            );
+          }
+          capture(u);
           return null; // let the request proceed normally
         },
         // JS-level hooks as a safety net. NOTE: these are injected into the
@@ -894,6 +907,19 @@ class StreamSourceDataSource {
     // encoders vary — normalize to lowercase before the empty-template check.
     final lower = query.toLowerCase();
     return !(lower.contains('headers=%7b%7d') || lower.contains('headers={}'));
+  }
+
+  /// Whether a URL belongs to the `disable-devtool` anti-debug script or its
+  /// 404-redirect host (`theajack.github.io`).
+  ///
+  /// On-device evidence (2026-08, iOS): 2embed.skin's player pages load
+  /// `disable-devtool`, which FALSE-POSITIVES "devtools opened" in a WKWebView
+  /// (iOS `innerWidth`/`outerWidth` differ in landscape/immersive) and
+  /// redirects the page to a 404 — killing the player so the capture never
+  /// sees the stream. Blocking the script lets the player run normally.
+  static bool isDisableDevtoolUrl(String url) {
+    final lower = url.toLowerCase();
+    return lower.contains('disable-devtool') || lower.contains('theajack');
   }
 
   /// Decides whether a scraped URL is a genuine playable media candidate.
