@@ -157,6 +157,7 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
   StreamSubscription<String>? _errorSub;
   StreamSubscription<bool>? _playingSub;
   StreamSubscription<Duration>? _positionSub;
+  StreamSubscription<Tracks>? _tracksSub;
 
   /// True once playback has actually started (playing=true). Transient errors
   /// after this are ignored — the video is demonstrably playing behind the
@@ -437,6 +438,17 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
       // Deliberately empty: see the doc above. Real start is decided in the
       // position listener.
     });
+    // Track diagnostics (2026-08, v1.3.17): the "no subtitles" complaints
+    // need on-device proof of what the stream actually carries. Most 2vcdn
+    // streams have NO subtitle track at all — the log line tells us whether
+    // libass has anything to render or the stream simply has none.
+    _tracksSub = _player.stream.tracks.listen((t) {
+      appLog(
+        'FILMKU_MPV_TRACKS',
+        'video=${t.video.length} audio=${t.audio.length} '
+            'subtitle=${t.subtitle.length}',
+      );
+    });
     _positionSub = _player.stream.position.listen((position) {
       // RAW current position — updates on every event, including backward
       // seeks, so the silent-freeze watchdog compares true progress (not a
@@ -477,6 +489,7 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
     _errorSub?.cancel();
     _playingSub?.cancel();
     _positionSub?.cancel();
+    _tracksSub?.cancel();
     _restorePortrait();
     // Player + local HLS relay lifecycle is owned by MiniPlayerService so the
     // mini player keeps playing after this route pops. Only a pop that was
@@ -555,16 +568,22 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
                 const ColoredBox(color: Colors.black),
               if (_failed && _autoFailover)
                 // Stream never started — auto-switching to the backup player.
-                // Compact notice (NOT the full error UI) so the user isn't
-                // parked on a dead-end error over a still-loading player.
-                // The real CDN error (e.g. "HTTP 428") is shown underneath so
-                // the user sees WHY before the screen auto-pops into the
-                // WebView fallback.
-                ColoredBox(
-                  color: Colors.black87,
-                  child: Center(
+                // COMPACT centered card (v1.3.17), NOT a full-screen blocker:
+                // the full-screen version covered the top bar (X unpressable)
+                // and sat over a still-loading player. The top bar and the
+                // player stay visible + pressable around the card; the real
+                // CDN error (e.g. "HTTP 428") is shown underneath so the
+                // user sees WHY before the screen auto-pops into the WebView
+                // fallback.
+                Center(
+                  child: Material(
+                    color: const Color(0xE616181D),
+                    borderRadius: BorderRadius.circular(14),
                     child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 24),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 26,
+                        vertical: 20,
+                      ),
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
@@ -599,19 +618,35 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
                   ),
                 ),
               if (_failed && !_autoFailover)
+                // Compact card, NOT the full-screen ErrorView: the full-screen
+                // version covered the always-visible top bar (X unpressable).
+                // The video keeps playing behind and the X / PiP stay usable;
+                // Retry / Back-to-WebView remain pressable (they're in the
+                // card, on top).
                 Center(
-                  child: ErrorView(
-                    message:
-                        'Native playback failed for ${widget.args.sourceLabel}.',
-                    onRetry: () {
-                      setState(() {
-                        _failed = false;
-                        _autoFailover = false;
-                      });
-                      _open();
-                    },
-                    secondaryLabel: 'Back to WebView',
-                    onSecondary: () => _close(failed: true),
+                  child: Material(
+                    color: const Color(0xF016181D),
+                    borderRadius: BorderRadius.circular(14),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 20,
+                        vertical: 18,
+                      ),
+                      child: ErrorView(
+                        compact: true,
+                        message:
+                            'Native playback failed for ${widget.args.sourceLabel}.',
+                        onRetry: () {
+                          setState(() {
+                            _failed = false;
+                            _autoFailover = false;
+                          });
+                          _open();
+                        },
+                        secondaryLabel: 'Back to WebView',
+                        onSecondary: () => _close(failed: true),
+                      ),
+                    ),
                   ),
                 ),
             ],

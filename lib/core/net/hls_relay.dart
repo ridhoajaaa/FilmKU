@@ -169,7 +169,14 @@ class HlsRelay {
   Future<void> _serveSegment(HttpRequest request, String src) async {
     final bytes = await _fetchBytes(src);
     final stripped = stripPngWrapper(bytes);
-    request.response.headers.contentType = ContentType('video', 'mp2t');
+    // Content type by SOURCE extension (not the relay route): WebVTT
+    // subtitle chunks must be served as text/vtt or the player's demuxer may
+    // reject them (2026-08: external subtitle tracks through the relay).
+    final srcPath = (Uri.tryParse(src)?.path ?? '').toLowerCase();
+    final contentType = srcPath.endsWith('.vtt')
+        ? ContentType('text', 'vtt')
+        : ContentType('video', 'mp2t');
+    request.response.headers.contentType = contentType;
     request.response.headers.set('Access-Control-Allow-Origin', '*');
     request.response.add(stripped);
     await request.response.close();
@@ -235,7 +242,11 @@ class HlsRelay {
   String _relayUri(String absoluteUrl) {
     final port = _server!.port;
     final path = (Uri.tryParse(absoluteUrl)?.path ?? '').toLowerCase();
-    final route = path.endsWith('.m3u8') ? 'media.m3u8' : 'segment.ts';
+    // Route by source extension so the served content type matches (m3u8 →
+    // playlist, vtt → subtitle text, everything else → MPEG-TS segment).
+    final route = path.endsWith('.m3u8')
+        ? 'media.m3u8'
+        : (path.endsWith('.vtt') ? 'media.vtt' : 'segment.ts');
     return 'http://127.0.0.1:$port/$route?src=${Uri.encodeComponent(absoluteUrl)}';
   }
 
