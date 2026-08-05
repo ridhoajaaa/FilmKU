@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../../../core/constants/app_constants.dart';
 import '../../../../core/local/settings_service.dart';
+import '../../../../core/net/hls_relay.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../data/datasources/stream_source_datasource.dart';
 import '../../domain/entities/movie_details.dart';
@@ -122,6 +123,55 @@ class PlayerScreen extends ConsumerStatefulWidget {
     return candidates.sublist(0, max);
   }
 
+  /// Revives session-scoped HLS relay URLs in a cached extraction result.
+  ///
+  /// [videoSourcesProvider] caches its result for the whole app session, but
+  /// a relay URL (`http://127.0.0.1:{port}/master.m3u8?src=…`) embeds a
+  /// loopback port that dies when the previous playback session ended
+  /// ([MiniPlayerService] disposes the relay on stop). Replaying the same
+  /// movie would hand mpv a dead URL → "No playable stream found" until a
+  /// force-quit clears the provider cache (2026-08 on-device report: closing
+  /// a movie with X then replaying it always failed).
+  ///
+  /// A cached relay URL is STALE (must be re-served) when the relay is dead
+  /// ([HlsRelay.port] null) OR bound by a different session (port differs).
+  /// A URL whose port matches the live relay (the current session, e.g. the
+  /// movie is still minimized) is kept as-is — this also makes the first
+  /// play free: extraction already served the URL moments ago, so re-serving
+  /// would be a redundant master fetch. A stale URL whose original CDN URL
+  /// can no longer be fetched is DROPPED so the flow falls through to
+  /// auto-capture (which resolves a fresh URL). Exposed for tests.
+  @visibleForTesting
+  static Future<List<VideoSource>> reviveRelaySources(
+    List<VideoSource> sources, {
+    Future<String?> Function(String originalUrl)? serve,
+    bool Function(String relayUrl)? isStale,
+  }) async {
+    final serveRelay = serve ?? (u) => HlsRelay.instance.serve(u);
+    final stale = isStale ??
+        (url) {
+          final currentPort = HlsRelay.instance.port;
+          if (currentPort == null) return true; // relay disposed → dead URL
+          final uri = Uri.tryParse(url);
+          // Different session's relay (different port) → URL is dead too.
+          return uri == null || uri.port != currentPort;
+        };
+    final live = <VideoSource>[];
+    for (final source in sources) {
+      final url = source.videoUrl;
+      String? revived;
+      if (url != null && StreamSourceDataSource.isRelayUrl(url)) {
+        final original = StreamSourceDataSource.relaySourceOf(url);
+        if (original != null && stale(url)) {
+          revived = await serveRelay(original);
+          if (revived == null) continue; // stale + unresolvable → drop
+        }
+      }
+      live.add(revived == null ? source : source.copyWith(videoUrl: revived));
+    }
+    return live;
+  }
+
   /// Builds the HTTP headers mpv should send to the stream CDN.
   ///
   /// 2026-08 iOS root cause: the signed 2embed/vidlink CDN URLs reject
@@ -223,20 +273,26 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
       final sources =
           await ref.read(videoSourcesProvider(widget.movieId).future);
       if (!mounted) return;
-      setState(() => _sources = sources);
+      // Re-serve cached relay URLs: the provider result is cached for the
+      // whole session, but a relay URL's loopback port dies with the previous
+      // playback session — replaying without this hits a dead port (see
+      // [reviveRelaySources]).
+      final revived = await PlayerScreen.reviveRelaySources(sources);
+      if (!mounted) return;
+      setState(() => _sources = revived);
 
-      final playable = sources.where((s) => s.isPlayable).toList();
+      final playable = revived.where((s) => s.isPlayable).toList();
       // TEMP-DIAG: on-device extraction yields zero playable streams
       // (OCR-verified screen). Log the extraction outcome — source count,
       // per-source playability and the headless toggle — so logcat shows
       // exactly why. Remove after the investigation concludes.
       debugPrint(
         'FILMKU_EXTRACT_SUMMARY movieId=${widget.movieId} '
-        'total=${sources.length} playable=${playable.length} '
+        'total=${revived.length} playable=${playable.length} '
         'headlessEnabled=${SettingsService.instance.headlessExtraction}',
       );
-      for (var i = 0; i < sources.length; i++) {
-        final s = sources[i];
+      for (var i = 0; i < revived.length; i++) {
+        final s = revived[i];
         debugPrint(
           'FILMKU_EXTRACT_SUMMARY i=$i label=${s.label} '
           'sourceId=${s.sourceId} isPlayable=${s.isPlayable} '

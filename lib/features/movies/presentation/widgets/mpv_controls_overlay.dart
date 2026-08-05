@@ -250,8 +250,14 @@ class _MpvControlsOverlayState extends State<MpvControlsOverlay> {
       return;
     }
     _subtitleVisible.value = !_subtitleVisible.value;
+    // Explicitly select the FIRST track (not SubtitleTrack.auto()): libmpv's
+    // `sid=auto` only enables DEFAULT/forced tracks, and HLS subtitle
+    // variants are usually DEFAULT=NO — auto() would silently keep subtitles
+    // off even after "Show subtitles".
     _player.setSubtitleTrack(
-      _subtitleVisible.value ? SubtitleTrack.auto() : SubtitleTrack.no(),
+      _subtitleVisible.value && _subtitleTracks.isNotEmpty
+          ? _subtitleTracks.first
+          : SubtitleTrack.no(),
     );
     _armHideTimer();
   }

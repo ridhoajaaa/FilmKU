@@ -418,6 +418,33 @@ flutter doctor   # Android toolchain should be green
   anchor, drag clamps, delta preservation). 190/190 tests pass, analyze clean.
 
 ## 📝 Changelog
+
+### `2026-08-05` — v1.3.18: replay bug fixed (stale relay URL) + subtitles auto-select
+
+- **Replay bug fixed.** Closing a movie (X) then replaying the SAME movie
+  always failed with "No playable stream found" until a force-quit. Root
+  cause: the extraction result is cached for the whole app session, but a
+  2Embed.skin source's `videoUrl` is a LOCAL HLS relay URL
+  (`http://127.0.0.1:{port}/master.m3u8?src=…`) whose loopback port dies
+  when the previous playback session ends. Replaying handed mpv a dead port
+  → connection refused → the whole flow collapsed to the error screen.
+  Fix: cached relay URLs are now revived at load time — re-served through a
+  freshly re-bound relay (or kept as-is when the live relay already matches
+  the URL's port, so the first play costs nothing). A stale URL whose CDN
+  original can no longer be fetched is dropped, so the flow falls through to
+  auto-capture instead of failing.
+- **Subtitles now auto-select.** libmpv only auto-enables DEFAULT/forced
+  subtitle tracks, and HLS subtitle variants are usually DEFAULT=NO — so
+  streams that HAD subtitles never showed them. The player now auto-selects
+  the first subtitle track once per open (FILMKU_MPV_SUBTRACK log), and the
+  subtitle toggle selects the first track explicitly instead of
+  `SubtitleTrack.auto()`. `FILMKU_MPV_TRACKS` now also logs track titles so
+  the on-device syslog proves whether a stream genuinely has no subtitle
+  track or the player was hiding it.
+- 9 new regression tests for the relay-revive logic + URL helpers.
+  **198/198 tests pass**, analyze clean.
+
+
 ### `2026-08-05` — v1.3.16: subtitles back (libass) + mini-player/expand/X fixes
 
 - **Embedded subtitles finally render again.** media_kit's mpv defaults

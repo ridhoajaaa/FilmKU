@@ -202,6 +202,13 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
   /// × 2 = 40s of zero movement) surface the failure.
   int _silentFreezeConsecutive = 0;
 
+  /// One-shot per open: whether the first subtitle track was auto-selected.
+  /// libmpv only auto-enables DEFAULT/forced subtitle tracks; HLS subtitle
+  /// variants are usually DEFAULT=NO, so a stream that HAS subtitles would
+  /// never show them without an explicit selection (2026-08: "movies have no
+  /// subtitles"). The user's own toggle / settings take over afterwards.
+  bool _subtitleAutoSelected = false;
+
   @override
   void initState() {
     super.initState();
@@ -258,6 +265,7 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
     _currentPosition = Duration.zero;
     _lastWatchPosition = Duration.zero;
     _silentFreezeConsecutive = 0;
+    _subtitleAutoSelected = false;
     _errorGraceTimer?.cancel();
     try {
       await _player.open(
@@ -446,8 +454,21 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
       appLog(
         'FILMKU_MPV_TRACKS',
         'video=${t.video.length} audio=${t.audio.length} '
-            'subtitle=${t.subtitle.length}',
+            'subtitle=${t.subtitle.length} '
+            'subTitles=${t.subtitle.map((s) => s.title ?? '?').join('|')}',
       );
+      // Auto-select the first subtitle track so subtitles show by DEFAULT
+      // when the stream carries them (libmpv only auto-enables DEFAULT/
+      // forced tracks; HLS subtitle variants are usually DEFAULT=NO). One-
+      // shot per open — the user's toggle/settings take over afterwards.
+      if (t.subtitle.isNotEmpty && !_subtitleAutoSelected) {
+        _subtitleAutoSelected = true;
+        _player.setSubtitleTrack(t.subtitle.first);
+        appLog(
+          'FILMKU_MPV_SUBTRACK',
+          'autoSelected=${t.subtitle.first.title ?? '(no title)'}',
+        );
+      }
     });
     _positionSub = _player.stream.position.listen((position) {
       // RAW current position — updates on every event, including backward

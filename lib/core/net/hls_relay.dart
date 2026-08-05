@@ -76,6 +76,12 @@ class HlsRelay {
 
   bool get isRunning => _server != null;
 
+  /// Current loopback port of the bound relay server, or null when not
+  /// running. [PlayerScreen.reviveRelaySources] compares a cached relay URL's
+  /// port against this to tell a LIVE relay URL (same session, keep as-is)
+  /// from a stale one (disposed relay or another session's port → re-serve).
+  int? get port => _server?.port;
+
   /// Starts the relay (idempotent) and returns the rewritten master-playlist
   /// URL for [masterUrl], or null if the master cannot be fetched.
   Future<String?> serve(String masterUrl) async {

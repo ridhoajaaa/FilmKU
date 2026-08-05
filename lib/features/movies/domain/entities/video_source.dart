@@ -32,4 +32,23 @@ class VideoSource {
   final List<SubtitleTrack> subtitles;
 
   bool get isPlayable => videoUrl != null && videoUrl!.isNotEmpty;
+
+  /// Returns a copy with any of the fields replaced.
+  VideoSource copyWith({
+    String? sourceId,
+    String? label,
+    String? videoUrl,
+    String? embedUrl,
+    String? quality,
+    List<SubtitleTrack>? subtitles,
+  }) {
+    return VideoSource(
+      sourceId: sourceId ?? this.sourceId,
+      label: label ?? this.label,
+      videoUrl: videoUrl ?? this.videoUrl,
+      embedUrl: embedUrl ?? this.embedUrl,
+      quality: quality ?? this.quality,
+      subtitles: subtitles ?? this.subtitles,
+    );
+  }
 }

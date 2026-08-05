@@ -1007,6 +1007,32 @@ class StreamSourceDataSource {
       'return o.apply(this,arguments);};}'
       '}catch(e){}}})();';
 
+  /// Whether a URL is a local HLS relay URL produced by [HlsRelay.serve]
+  /// (`http://127.0.0.1:{port}/master.m3u8?src={original}`).
+  ///
+  /// These URLs are SESSION-SCOPED: the relay server binds a random loopback
+  /// port and is disposed when playback stops, so a cached relay URL is only
+  /// valid while that relay is alive. [PlayerScreen] re-serves cached relay
+  /// URLs before playback so a replayed movie never hits a dead port (2026-08:
+  /// closing a movie then replaying it failed with "no playable stream found"
+  /// until a force-quit cleared the provider cache).
+  static bool isRelayUrl(String url) {
+    if (!url.startsWith('http://127.0.0.1:')) return false;
+    final uri = Uri.tryParse(url);
+    return uri != null &&
+        uri.path.endsWith('.m3u8') &&
+        uri.queryParameters.containsKey('src');
+  }
+
+  /// Extracts the ORIGINAL CDN URL a relay URL proxies for, or null when
+  /// [relayUrl] is not a relay URL (no `src` query).
+  static String? relaySourceOf(String relayUrl) {
+    final uri = Uri.tryParse(relayUrl);
+    if (uri == null) return null;
+    final src = uri.queryParameters['src'];
+    return (src == null || src.isEmpty) ? null : src;
+  }
+
   /// Whether a URL belongs to the `disable-devtool` anti-debug script or its
   /// 404-redirect host (`theajack.github.io`).
   ///
