@@ -33,8 +33,12 @@ class _MiniPlayerOverlayState extends State<MiniPlayerOverlay> {
   bool _shown = false;
   Timer? _revealTimer;
 
-  Offset _position = Offset.zero;
-  bool _positionInitialized = false;
+  /// User drag delta relative to the bottom-right anchor, so the mini player
+  /// stays anchored (follows rotation / screen-size changes) instead of
+  /// freezing at a stale absolute position (2026-08: it appeared mid-screen
+  /// because the anchor was computed once with the LANDSCAPE size of the
+  /// fullscreen player, then portrait kicked in).
+  Offset _dragOffset = Offset.zero;
 
   @override
   void initState() {
@@ -67,7 +71,7 @@ class _MiniPlayerOverlayState extends State<MiniPlayerOverlay> {
       });
     } else {
       _revealTimer?.cancel();
-      _positionInitialized = false;
+      _dragOffset = Offset.zero;
       setState(() {
         _shown = false;
         _session = null;
@@ -75,7 +79,9 @@ class _MiniPlayerOverlayState extends State<MiniPlayerOverlay> {
     }
   }
 
-  Offset _defaultPosition(Size size) {
+  /// Bottom-right anchor (above the tab bar) — recomputed EVERY build from
+  /// the current screen size, so rotation re-anchors correctly.
+  Offset _anchor(Size size) {
     return Offset(size.width - _width - 12, size.height - _height - 120);
   }
 
@@ -99,23 +105,20 @@ class _MiniPlayerOverlayState extends State<MiniPlayerOverlay> {
     final session = _session;
     if (session == null || !_shown) return const SizedBox.shrink();
     final size = MediaQuery.of(context).size;
-    if (!_positionInitialized) {
-      _position = _defaultPosition(size);
-      _positionInitialized = true;
-    }
-    final dx = _position.dx.clamp(0.0, size.width - _width);
-    final dy = _position.dy.clamp(0.0, size.height - _height);
+    final anchor = _anchor(size);
+    final dx = (anchor.dx + _dragOffset.dx).clamp(0.0, size.width - _width);
+    final dy = (anchor.dy + _dragOffset.dy).clamp(0.0, size.height - _height);
     return Positioned(
       left: dx,
       top: dy,
       child: GestureDetector(
         onPanUpdate: (details) {
           setState(() {
-            _position = Offset(
-              (_position.dx + details.delta.dx).clamp(0.0, size.width - _width),
-              (_position.dy + details.delta.dy)
-                  .clamp(0.0, size.height - _height),
-            );
+            final nextDx = (anchor.dx + _dragOffset.dx + details.delta.dx)
+                .clamp(0.0, size.width - _width);
+            final nextDy = (anchor.dy + _dragOffset.dy + details.delta.dy)
+                .clamp(0.0, size.height - _height);
+            _dragOffset = Offset(nextDx - anchor.dx, nextDy - anchor.dy);
           });
         },
         onTap: _expand,

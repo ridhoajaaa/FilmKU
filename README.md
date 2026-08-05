@@ -388,6 +388,26 @@ flutter doctor   # Android toolchain should be green
 ---
 
 ## 📝 Changelog
+### `2026-08-05` — v1.3.15: mini-player position + honest subtitle/settings feedback
+
+- **Mini player anchors bottom-right again.** It appeared mid-screen because
+  the position was computed once with the LANDSCAPE size of the fullscreen
+  player, then portrait rotation kicked in. The floating window now stores a
+  drag delta relative to a bottom-right anchor recomputed every build, so it
+  always lands at the bottom (and follows rotation while dragged).
+- **Subtitle button gives honest feedback.** Most streams carry no subtitle
+  track, so the toggle silently did nothing (read as broken). Now it shows a
+  short "Subtitel tidak tersedia untuk stream ini." notice — but only after
+  the stream actually loaded (avoids a false message while tracks are still
+  being enumerated).
+- **Settings sheet tells the truth about tracks.** Resolusi/Audio sections
+  always render: with a single track (the common HLS case) they explain the
+  quality is adaptive / uses the default track instead of showing a tap that
+  does nothing; the subtitle-track section shows "tidak tersedia" when the
+  stream has none. Speed is the only actively switchable option on these
+  single-track streams, which is now visibly why.
+- 185/185 tests pass, analyze clean.
+
 ### `2026-08-05` — v1.3.14: player preferences remembered across sessions
 
 - **Playback speed, subtitle size and mute now persist** in the Hive-backed

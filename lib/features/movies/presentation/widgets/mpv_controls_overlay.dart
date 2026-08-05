@@ -225,6 +225,26 @@ class _MpvControlsOverlayState extends State<MpvControlsOverlay> {
   }
 
   void _toggleSubtitles() {
+    if (_subtitleTracks.isEmpty) {
+      _armHideTimer();
+      // 2026-08: most streams here carry NO subtitle track — tapping the
+      // subtitle button used to do nothing visible, which read as "broken".
+      // Tell the user honestly instead of silently toggling nothing.
+      // stream.tracks emits a beat AFTER playback starts, so only declare
+      // "no subtitles" once the stream has actually loaded (duration > 0).
+      if (_duration <= Duration.zero) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text('Subtitel tidak tersedia untuk stream ini.'),
+            duration: Duration(seconds: 2),
+            behavior: SnackBarBehavior.floating,
+            backgroundColor: Color(0xE616181D),
+          ),
+        );
+      return;
+    }
     _subtitleVisible.value = !_subtitleVisible.value;
     _player.setSubtitleTrack(
       _subtitleVisible.value ? SubtitleTrack.auto() : SubtitleTrack.no(),
@@ -555,17 +575,17 @@ class _SettingsSheet extends StatefulWidget {
 }
 
 class _SettingsSheetState extends State<_SettingsSheet> {
-  String _fmtTrackTitle(String? title) {
+  String _fmtTrackTitle(String? title, {String fallback = 'Track'}) {
     final t = title?.trim();
-    if (t == null || t.isEmpty || t == 'Undetermined') return 'Track';
+    if (t == null || t.isEmpty || t == 'Undetermined') return fallback;
     return t;
   }
 
   @override
   Widget build(BuildContext context) {
-    final showQuality = widget.videoTracks.length > 1;
-    final showAudio = widget.audioTracks.length > 1;
-    final showSubs = widget.subtitleTracks.isNotEmpty;
+    final videoTracks = widget.videoTracks;
+    final audioTracks = widget.audioTracks;
+    final subtitleTracks = widget.subtitleTracks;
     return SafeArea(
       child: SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(20, 18, 20, 28),
@@ -641,98 +661,84 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                 ),
               ],
             ),
-            if (showQuality) ...[
+            if (videoTracks.isNotEmpty) ...[
               const SizedBox(height: 20),
               const _SectionTitle('Resolusi'),
               const SizedBox(height: 10),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  for (final track in widget.videoTracks)
-                    ActionChip(
-                      label: Text(_fmtTrackTitle(track.title)),
-                      onPressed: () {
-                        widget.player.setVideoTrack(track);
-                        Navigator.of(context).pop();
-                      },
-                      backgroundColor: Colors.white10,
-                      labelStyle: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
+              if (videoTracks.length > 1)
+                // Multiple quality tracks — real choice.
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (final track in videoTracks)
+                      _TrackChip(
+                        label: _fmtTrackTitle(track.title, fallback: 'Auto'),
+                        onTap: () {
+                          widget.player.setVideoTrack(track);
+                          Navigator.of(context).pop();
+                        },
                       ),
-                      side: BorderSide.none,
-                    ),
-                ],
-              ),
+                  ],
+                )
+              else
+                // Single track (the common HLS case): no tap-to-switch to
+                // offer — just explain the stream is adaptive.
+                const _SheetHint(
+                  'Kualitas adaptif — dikelola otomatis oleh pemutar.',
+                ),
             ],
-            if (showAudio) ...[
+            if (audioTracks.isNotEmpty) ...[
               const SizedBox(height: 20),
               const _SectionTitle('Audio'),
               const SizedBox(height: 10),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  for (final track in widget.audioTracks)
-                    ActionChip(
-                      label: Text(_fmtTrackTitle(track.title)),
-                      onPressed: () {
-                        widget.player.setAudioTrack(track);
-                        Navigator.of(context).pop();
-                      },
-                      backgroundColor: Colors.white10,
-                      labelStyle: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
+              if (audioTracks.length > 1)
+                // Multiple audio tracks — real choice.
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (final track in audioTracks)
+                      _TrackChip(
+                        label: _fmtTrackTitle(track.title, fallback: 'Default'),
+                        onTap: () {
+                          widget.player.setAudioTrack(track);
+                          Navigator.of(context).pop();
+                        },
                       ),
-                      side: BorderSide.none,
-                    ),
-                ],
-              ),
+                  ],
+                )
+              else
+                // Single track — nothing to switch to.
+                const _SheetHint('Menggunakan track audio default.'),
             ],
-            if (showSubs) ...[
-              const SizedBox(height: 20),
-              const _SectionTitle('Track subtitle'),
-              const SizedBox(height: 10),
+            const SizedBox(height: 20),
+            const _SectionTitle('Track subtitle'),
+            const SizedBox(height: 10),
+            if (subtitleTracks.isEmpty)
+              const _SheetHint('Subtitel tidak tersedia untuk stream ini.')
+            else
               Wrap(
                 spacing: 8,
                 runSpacing: 8,
                 children: [
-                  ActionChip(
-                    label: const Text('Off'),
-                    onPressed: () {
+                  _TrackChip(
+                    label: 'Off',
+                    onTap: () {
                       widget.player.setSubtitleTrack(SubtitleTrack.no());
                       Navigator.of(context).pop();
                     },
-                    backgroundColor: Colors.white10,
-                    labelStyle: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                    ),
-                    side: BorderSide.none,
                   ),
-                  for (final track in widget.subtitleTracks)
-                    ActionChip(
-                      label: Text(_fmtTrackTitle(track.title)),
-                      onPressed: () {
+                  for (final track in subtitleTracks)
+                    _TrackChip(
+                      label: _fmtTrackTitle(track.title, fallback: 'Subtitel'),
+                      onTap: () {
                         widget.player.setSubtitleTrack(track);
                         Navigator.of(context).pop();
                       },
-                      backgroundColor: Colors.white10,
-                      labelStyle: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                      ),
-                      side: BorderSide.none,
                     ),
                 ],
               ),
-            ],
           ],
         ),
       ),
@@ -755,6 +761,42 @@ class _SectionTitle extends StatelessWidget {
         fontWeight: FontWeight.w600,
         letterSpacing: 0.3,
       ),
+    );
+  }
+}
+
+class _TrackChip extends StatelessWidget {
+  const _TrackChip({required this.label, required this.onTap});
+
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return ActionChip(
+      label: Text(label),
+      onPressed: onTap,
+      backgroundColor: Colors.white10,
+      labelStyle: const TextStyle(
+        color: Colors.white,
+        fontSize: 13,
+        fontWeight: FontWeight.w600,
+      ),
+      side: BorderSide.none,
+    );
+  }
+}
+
+class _SheetHint extends StatelessWidget {
+  const _SheetHint(this.text);
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      text,
+      style: const TextStyle(color: Colors.white38, fontSize: 12),
     );
   }
 }
