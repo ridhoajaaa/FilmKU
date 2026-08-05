@@ -389,6 +389,27 @@ flutter doctor   # Android toolchain should be green
 
 ## 📝 Changelog
 
+### `2026-08-05` — v1.3.9: 2Embed.skin direct-player bypass — iOS finally plays natively
+
+- **Root cause (on-device iOS syslog + headless proof):** the 2embed.skin shell
+  (`/embed/movie/{id}`) is an ad landing page that JS-redirects to
+  `/movie/movie/{id}` — which embeds the DEAD `2embed.cc` player. The redirect
+  cancels the real player iframe (`streamsrcs → 2vcdn`) before it loads
+  (NSURLError -999 in syslog), so iOS never captured a stream while Android
+  won the race.
+- **Fix:** resolve the shell to its direct JW-player URL (`2vcdn.skin/e/{sid}`)
+  via plain HTTP (parse the shell's `data-src` swish id), load THAT page
+  directly, and cancel its anti-framing `location.replace("/")` redirect in
+  `shouldOverrideUrlLoading`. The JW player then serves plain `.m3u8`
+  (`2vcdn.skin/stream/.../master.m3u8` — verified headless) straight into
+  capture → native mpv, with no ad shell at all.
+- Applied to all three paths: extraction (`TwoEmbedSkinExtractor` + headless
+  extractor), hidden auto-capture, and the visible WebView fallback.
+- 6 new unit tests (swish-id parse incl. entity-encoded, 2vcdn URL build,
+  killer-navigation cancellation). **158/158 tests pass, analyze clean.**
+
+
+
 ### `2026-08-03` — v1.3.8: neutralise `disable-devtool` — 2Embed.skin finally captures on iOS
 
 **On-device evidence (iOS syslog 2026-08-03):** 2embed.skin's embed + player pages

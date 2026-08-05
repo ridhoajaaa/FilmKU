@@ -816,6 +816,93 @@ void main() {
       expect(a, 'https://noir.suubmon.store/mp/resource/a.mp4');
     });
   });
+
+  group('StreamSourceDataSource.2embed direct-player resolution', () {
+    test('parses swish id from shell data-src and builds the 2vcdn URL', () {
+      const html = '<iframe id="iframesrc" src="about:blank" '
+          'data-src="https://streamsrcs.2embed.cc/swish?id=4rc2jaa92ugh'
+          '&ref=mdrct"></iframe>';
+      expect(
+        StreamSourceDataSource.resolveTwoEmbedSwishId(html),
+        '4rc2jaa92ugh',
+      );
+      expect(
+        StreamSourceDataSource.buildTwoEmbedPlayerUrl(html),
+        'https://2vcdn.skin/e/4rc2jaa92ugh',
+      );
+    });
+
+    test('decodes entity-encoded ampersands before parsing', () {
+      const html = '<iframe '
+          'data-src="https://streamsrcs.2embed.cc/swish?id=ab12cd34'
+          '&amp;ref=mdrct"></iframe>';
+      expect(
+        StreamSourceDataSource.resolveTwoEmbedSwishId(html),
+        'ab12cd34',
+      );
+    });
+
+    test('returns null when the shell has no swish data-src', () {
+      const html = '<html><body>no player here</body></html>';
+      expect(StreamSourceDataSource.resolveTwoEmbedSwishId(html), isNull);
+      expect(StreamSourceDataSource.buildTwoEmbedPlayerUrl(html), isNull);
+    });
+  });
+
+  group('StreamSourceDataSource.isTwoEmbedKillerNavigation', () {
+    test('cancels the 2vcdn anti-frame root redirect', () {
+      expect(
+        StreamSourceDataSource.isTwoEmbedKillerNavigation(
+          'https://2vcdn.skin/',
+        ),
+        isTrue,
+      );
+      expect(
+        StreamSourceDataSource.isTwoEmbedKillerNavigation('https://2vcdn.skin'),
+        isTrue,
+      );
+      // The actual player page must NOT be cancelled.
+      expect(
+        StreamSourceDataSource.isTwoEmbedKillerNavigation(
+          'https://2vcdn.skin/e/4rc2jaa92ugh',
+        ),
+        isFalse,
+      );
+      expect(
+        StreamSourceDataSource.isTwoEmbedKillerNavigation(
+          'https://2vcdn.skin/stream/x/master.m3u8',
+        ),
+        isFalse,
+      );
+    });
+
+    test('cancels the shell movie/movie redirect but not the embed page', () {
+      expect(
+        StreamSourceDataSource.isTwoEmbedKillerNavigation(
+          'https://www.2embed.skin/movie/movie/1481343',
+        ),
+        isTrue,
+      );
+      expect(
+        StreamSourceDataSource.isTwoEmbedKillerNavigation(
+          'https://www.2embed.skin/embed/movie/1481343',
+        ),
+        isFalse,
+      );
+      expect(
+        StreamSourceDataSource.isTwoEmbedKillerNavigation(
+          'https://www.2embed.cc/embed/movie/1481343',
+        ),
+        isFalse,
+      );
+      expect(
+        StreamSourceDataSource.isTwoEmbedKillerNavigation(
+          'https://vidlink.pro/movie/155',
+        ),
+        isFalse,
+      );
+    });
+  });
 }
 
 void _noop() {}

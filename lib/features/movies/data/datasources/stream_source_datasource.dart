@@ -243,6 +243,19 @@ class HeadlessStreamExtractor {
         onWebViewCreated: (controller) {
           debugPrint('FILMKU_EXTRACT_HEADLESS webViewCreated');
         },
+        // The 2vcdn player refuses to run top-level (`location.replace("/")`
+        // anti-frame guard) and the 2embed shell redirects to a DEAD
+        // 2embed.cc embed — cancel both so the JW player (and its .m3u8
+        // requests) actually load during headless extraction.
+        shouldOverrideUrlLoading: (controller, navigationAction) async {
+          final target = navigationAction.request.url;
+          if (target != null &&
+              StreamSourceDataSource.isTwoEmbedKillerNavigation(
+                  target.toString())) {
+            return NavigationActionPolicy.CANCEL;
+          }
+          return NavigationActionPolicy.ALLOW;
+        },
         onLoadStart: (controller, _) {
           debugPrint('FILMKU_EXTRACT_HEADLESS onLoadStart url=$url');
         },
@@ -685,13 +698,24 @@ class TwoEmbedSkinExtractor extends StreamExtractor {
       'https://www.2embed.skin/embed/movie/$tmdbId';
 
   @override
-  Future<VideoSource?> extract(int tmdbId, {required bool useHeadless}) {
-    final embedUrl = buildEmbedUrl(tmdbId);
-    if (embedUrl == null) return Future.value(null);
+  Future<VideoSource?> extract(int tmdbId, {required bool useHeadless}) async {
+    final shell = buildEmbedUrl(tmdbId);
+    if (shell == null) return null;
+    // Resolve the ad shell to its direct JW-player URL (`2vcdn.skin/e/{sid}`)
+    // via plain HTTP (no WebView). The player page serves plain .m3u8 on its
+    // own CDN and strips its own ads, so extraction (and later mpv) finally
+    // has a real target instead of a shell that redirects to dead 2embed.cc.
+    final playerUrl =
+        await StreamSourceDataSource.fetchTwoEmbedPlayerUrl(shell);
+    final target = playerUrl ?? shell;
+    debugPrint(
+      'FILMKU_EXTRACT_TRY sourceId=$sourceId label=$label '
+      'playerUrl=${playerUrl ?? 'none'} target=$target',
+    );
     return _ScrapeHelper.tryExtract(
       sourceId,
       label,
-      embedUrl,
+      target,
       useHeadless: useHeadless,
     );
   }
@@ -920,6 +944,69 @@ class StreamSourceDataSource {
   static bool isDisableDevtoolUrl(String url) {
     final lower = url.toLowerCase();
     return lower.contains('disable-devtool') || lower.contains('theajack');
+  }
+
+  /// Extracts the 2embed player session id (`sid`) from the shell page HTML.
+  ///
+  /// The 2embed.skin shell (`/embed/movie/{id}`) embeds its real player with
+  /// `data-src="https://streamsrcs.2embed.cc/swish?id={sid}&ref=mdrct"`. The
+  /// player itself lives at `2vcdn.skin/e/{sid}` (JW Player) and serves plain
+  /// `.m3u8` playlists on `2vcdn.skin/stream/...` (verified headless 2026-08:
+  /// framed load produced `master.m3u8` + `index-v1-a1.m3u8`). Loading the
+  /// player URL DIRECTLY bypasses the ad shell, its disable-devtool script and
+  /// its dead `2embed.cc` redirect — the iOS native-playback fix.
+  static String? resolveTwoEmbedSwishId(String shellHtml) {
+    final cleaned = decodeHtmlEntities(shellHtml);
+    final match = RegExp(
+      r'data-src="[^"]*streamsrcs[.]2embed[.]cc/swish[?]id=([a-zA-Z0-9_-]+)',
+      caseSensitive: false,
+    ).firstMatch(cleaned);
+    return match?.group(1);
+  }
+
+  /// Builds the direct JW-player URL for a 2embed.skin shell page, or null
+  /// when the shell does not expose its swish id (no data-src / parse
+  /// failure).
+  static String? buildTwoEmbedPlayerUrl(String shellHtml) {
+    final sid = resolveTwoEmbedSwishId(shellHtml);
+    if (sid == null || sid.isEmpty) return null;
+    return 'https://2vcdn.skin/e/$sid';
+  }
+
+  /// Fetches the 2embed.skin shell page for [embedUrl] (plain HTTP — no
+  /// WebView needed) and resolves its direct JW-player URL, or null on any
+  /// failure (unreachable shell / no swish id).
+  static Future<String?> fetchTwoEmbedPlayerUrl(String embedUrl) async {
+    final match = RegExp(r'/embed/movie/([0-9]+)').firstMatch(embedUrl);
+    if (match == null) return null;
+    try {
+      // Hard 8s cap: a hanging shell must never starve the capture budget
+      // (the first auto-capture provider only gets 30s) or hold the visible
+      // WebView's resolution gate open forever.
+      final html =
+          await _HtmlFetcher.get(embedUrl).timeout(const Duration(seconds: 8));
+      return buildTwoEmbedPlayerUrl(html);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Whether a navigation should be cancelled inside a 2embed capture WebView:
+  /// - `2vcdn.skin/` — the player's own anti-framing `location.replace("/")`
+  ///   (`if(window==window.top)`); the player ONLY runs when this redirect is
+  ///   stopped (verified headless 2026-08: the framed load requested the
+  ///   m3u8, the top-level load redirected to `/`).
+  /// - any `2embed` host navigating to `/movie/movie/` — the shell's redirect
+  ///   to the DEAD `2embed.cc` embed that cancels the player iframe on iOS
+  ///   (NSURLError -999, v1.3.8 syslog).
+  static bool isTwoEmbedKillerNavigation(String url) {
+    final uri = Uri.tryParse(url);
+    if (uri == null || !uri.hasAuthority) return false;
+    final host = uri.host.toLowerCase();
+    final path = uri.path;
+    if (host == '2vcdn.skin' && (path.isEmpty || path == '/')) return true;
+    if (host.contains('2embed') && path.contains('/movie/movie/')) return true;
+    return false;
   }
 
   /// Decides whether a scraped URL is a genuine playable media candidate.

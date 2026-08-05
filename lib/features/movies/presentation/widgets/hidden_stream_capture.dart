@@ -185,6 +185,42 @@ class _HiddenStreamCaptureState extends State<HiddenStreamCapture> {
   String _rejectedKey = '';
   int _rejectedCount = 0;
 
+  /// 2embed.skin's shell redirects to a DEAD 2embed.cc embed on iOS (killing
+  /// the player iframe — NSURLError -999 in the v1.3.8 syslog). Resolve the
+  /// shell to its direct JW-player URL (`2vcdn.skin/e/{sid}`) via plain HTTP
+  /// and load THAT instead: the player page serves plain .m3u8 on its own CDN
+  /// and strips its own ads (verified headless 2026-08).
+  String _resolvedUrl = '';
+
+  /// True once resolution finished (success OR failure). Keying off
+  /// [_resolvedUrl.isEmpty] alone would leave the gate open forever when the
+  /// shell is unreachable — the capture would burn its whole timeout doing
+  /// nothing instead of loading the shell (reviewer finding 2026-08).
+  bool _resolveDone = false;
+
+  String get _effectiveUrl => _resolvedUrl.isEmpty ? widget.url : _resolvedUrl;
+
+  bool get _resolvingPlayer {
+    return widget.url.contains('2embed.skin') && !_resolveDone;
+  }
+
+  Future<void> _resolveTwoEmbedPlayer() async {
+    if (!widget.url.contains('2embed.skin')) return;
+    final resolved =
+        await StreamSourceDataSource.fetchTwoEmbedPlayerUrl(widget.url);
+    if (!mounted) return;
+    setState(() {
+      _resolveDone = true;
+      // On failure (null) _resolvedUrl stays empty → the shell URL is loaded
+      // instead, with the killer-navigation cancels protecting it.
+      if (resolved != null && resolved.isNotEmpty) _resolvedUrl = resolved;
+    });
+    if (resolved != null && resolved.isNotEmpty) {
+      debugPrint('FILMKU_AUTOCAPTURE_RESOLVE source=${widget.sourceLabel} '
+          'from=${widget.url} to=$resolved');
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -196,6 +232,7 @@ class _HiddenStreamCaptureState extends State<HiddenStreamCapture> {
     _timeoutTimer = Timer(widget.timeout, () {
       if (_captured == null && mounted) widget.onTimeout();
     });
+    _resolveTwoEmbedPlayer();
   }
 
   @override
@@ -349,6 +386,12 @@ class _HiddenStreamCaptureState extends State<HiddenStreamCapture> {
 
   @override
   Widget build(BuildContext context) {
+    if (_resolvingPlayer) {
+      // 2embed.skin shell → JW-player URL resolution in flight (plain HTTP,
+      // sub-second). The parent's opaque overlay covers this, so the user
+      // still only sees the spinner.
+      return Container(color: Colors.black);
+    }
     // Full-size, gesture-ignoring WebView — genuinely VISIBLE to the Android
     // view system (see the class doc for why hiding it breaks the player).
     // The parent's opaque overlay is painted ON TOP, so the user never sees
@@ -356,7 +399,7 @@ class _HiddenStreamCaptureState extends State<HiddenStreamCapture> {
     return IgnorePointer(
       ignoring: true,
       child: InAppWebView(
-        initialUrlRequest: URLRequest(url: WebUri(widget.url)),
+        initialUrlRequest: URLRequest(url: WebUri(_effectiveUrl)),
         // Interception callbacks (request/fetch/ajax) must be explicitly
         // enabled on iOS (they default to false there, on vs. off on
         // Android) — otherwise the capture never sees the stream URL and
@@ -379,7 +422,9 @@ class _HiddenStreamCaptureState extends State<HiddenStreamCapture> {
           final target = navigationAction.request.url;
           if (target != null &&
               (embedIsAdHost(target.host) ||
-                  embedIsDisableDevtoolUrl(target.toString()))) {
+                  embedIsDisableDevtoolUrl(target.toString()) ||
+                  StreamSourceDataSource.isTwoEmbedKillerNavigation(
+                      target.toString()))) {
             return NavigationActionPolicy.CANCEL;
           }
           return NavigationActionPolicy.ALLOW;

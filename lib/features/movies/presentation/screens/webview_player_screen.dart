@@ -334,6 +334,45 @@ class _WebViewPlayerScreenState extends State<WebViewPlayerScreen> {
   /// source's own player controls directly).
   bool _tapAttempted = false;
 
+  /// 2embed.skin's shell redirects to a DEAD 2embed.cc embed (iOS: NSURLError
+  /// -999 kills the player iframe — v1.3.8 syslog). Resolve the shell to its
+  /// direct JW-player URL (`2vcdn.skin/e/{sid}`) via plain HTTP and load THAT
+  /// instead: the player page serves plain .m3u8 on its own CDN and strips its
+  /// own ads (verified headless 2026-08).
+  String _resolvedUrl = '';
+
+  /// True once resolution finished (success OR failure). Keying off
+  /// [_resolvedUrl.isEmpty] alone would leave the gate open forever when the
+  /// shell is unreachable — the visible WebView would sit on "Loading
+  /// player…" indefinitely with no timeout (reviewer finding 2026-08).
+  bool _resolveDone = false;
+
+  String get _effectiveUrl =>
+      _resolvedUrl.isEmpty ? widget.args.url : _resolvedUrl;
+
+  bool get _resolvingPlayer {
+    return widget.args.url.contains('2embed.skin') && !_resolveDone;
+  }
+
+  Future<void> _resolveTwoEmbedPlayer() async {
+    if (!widget.args.url.contains('2embed.skin')) return;
+    final resolved =
+        await StreamSourceDataSource.fetchTwoEmbedPlayerUrl(widget.args.url);
+    if (!mounted) return;
+    setState(() {
+      _resolveDone = true;
+      // On failure (null) _resolvedUrl stays empty → the shell URL is loaded
+      // instead, with the killer-navigation cancels protecting it.
+      if (resolved != null && resolved.isNotEmpty) _resolvedUrl = resolved;
+    });
+    if (resolved != null && resolved.isNotEmpty) {
+      debugPrint(
+        'FILMKU_WEBVIEW_RESOLVE source=${widget.args.sourceLabel} '
+        'from=${widget.args.url} to=$resolved',
+      );
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -345,6 +384,7 @@ class _WebViewPlayerScreenState extends State<WebViewPlayerScreen> {
     _probeTimer = Timer.periodic(const Duration(seconds: 2), (_) {
       _probeNativeStream();
     });
+    _resolveTwoEmbedPlayer();
   }
 
   @override
@@ -678,176 +718,186 @@ class _WebViewPlayerScreenState extends State<WebViewPlayerScreen> {
             child: Stack(
               fit: StackFit.expand,
               children: [
-                InAppWebView(
-                  initialUrlRequest: URLRequest(url: WebUri(widget.args.url)),
-                  // Interception (request/fetch/ajax) must be explicitly on for
-                  // iOS — defaults are false there, on Android they default on.
-                  // Shared builder keeps every capture WebView consistent.
-                  initialSettings: buildCaptureWebViewSettings(),
-                  onWebViewCreated: (controller) {
-                    _controller = controller;
-                    _injectAllFramesScript(controller);
-                    debugPrint(
-                      'FILMKU_WEBVIEW_OPEN source=${widget.args.sourceLabel} '
-                      'url=${widget.args.url}',
-                    );
-                  },
-                  // Main-frame navigations to ad landing pages (the "tap
-                  // anywhere → ad" hijack) and the disable-devtool 404
-                  // redirect (kills 2embed's player on iOS WKWebView) are
-                  // cancelled before they start.
-                  shouldOverrideUrlLoading:
-                      (controller, navigationAction) async {
-                    final target = navigationAction.request.url;
-                    if (target != null &&
-                        (WebViewPlayerScreen.isAdHost(target.host) ||
-                            WebViewPlayerScreen.isDisableDevtoolUrl(
-                                target.toString()))) {
-                      return NavigationActionPolicy.CANCEL;
-                    }
-                    return NavigationActionPolicy.ALLOW;
-                  },
-                  // Ad/tracker sub-resources are answered with an empty 204 so
-                  // their scripts never reach the page — including the
-                  // disable-devtool anti-debug script, which false-positives
-                  // on iOS WKWebView and redirects 2embed's player to a 404.
-                  // Plain .m3u8/.mp4 media loads (also from inside iframes)
-                  // are captured for native handoff. Everything else loads
-                  // normally (return null).
-                  shouldInterceptRequest: (controller, request) async {
-                    final url = request.url.toString();
-                    final host = request.url.host;
-                    if (WebViewPlayerScreen.isDisableDevtoolUrl(url)) {
-                      _adBlocked++;
+                // While the 2embed.skin shell resolves to its direct
+                // JW-player URL (plain HTTP, sub-second) keep the WebView
+                // uncreated; the "Loading player…" spinner is shown below.
+                if (_resolvingPlayer)
+                  const SizedBox.shrink()
+                else
+                  InAppWebView(
+                    initialUrlRequest: URLRequest(url: WebUri(_effectiveUrl)),
+                    // Interception (request/fetch/ajax) must be explicitly on for
+                    // iOS — defaults are false there, on Android they default on.
+                    // Shared builder keeps every capture WebView consistent.
+                    initialSettings: buildCaptureWebViewSettings(),
+                    onWebViewCreated: (controller) {
+                      _controller = controller;
+                      _injectAllFramesScript(controller);
                       debugPrint(
-                        'FILMKU_WEBVIEW_BLOCK_DEVTOOL url=$url total=$_adBlocked',
+                        'FILMKU_WEBVIEW_OPEN source=${widget.args.sourceLabel} '
+                        'url=${widget.args.url}',
                       );
-                      return WebResourceResponse(
-                        contentType: 'text/plain',
-                        contentEncoding: 'utf-8',
-                        statusCode: 204,
-                        reasonPhrase: 'Blocked by FilmKU',
-                        data: Uint8List(0),
-                      );
-                    }
-                    if (WebViewPlayerScreen.isAdHost(host)) {
-                      _adBlocked++;
-                      debugPrint(
-                        'FILMKU_WEBVIEW_ADBLOCK host=$host total=$_adBlocked',
-                      );
-                      // Throttle UI updates — ad requests can burst.
-                      if (mounted && (_adBlocked <= 2 || _adBlocked % 5 == 0)) {
-                        setState(() {});
+                    },
+                    // Main-frame navigations to ad landing pages (the "tap
+                    // anywhere → ad" hijack) and the disable-devtool 404
+                    // redirect (kills 2embed's player on iOS WKWebView) are
+                    // cancelled before they start.
+                    shouldOverrideUrlLoading:
+                        (controller, navigationAction) async {
+                      final target = navigationAction.request.url;
+                      if (target != null &&
+                          (WebViewPlayerScreen.isAdHost(target.host) ||
+                              WebViewPlayerScreen.isDisableDevtoolUrl(
+                                  target.toString()) ||
+                              StreamSourceDataSource.isTwoEmbedKillerNavigation(
+                                  target.toString()))) {
+                        return NavigationActionPolicy.CANCEL;
                       }
-                      return WebResourceResponse(
-                        contentType: 'text/plain',
-                        contentEncoding: 'utf-8',
-                        statusCode: 204,
-                        reasonPhrase: 'Blocked by FilmKU',
-                        data: Uint8List(0),
-                      );
-                    }
-                    if (WebViewPlayerScreen.isMediaUrl(url)) {
-                      debugPrint('FILMKU_WEBVIEW_CAPTURE url=$url');
-                      _setNativeStream(
-                        url,
-                        Duration.zero,
-                        via: 'intercept',
-                      );
-                    }
-                    return null;
-                  },
-                  // fetch()/XHR media loads (e.g. a JS player fetching the HLS
-                  // manifest). NOTE: on Android these JS-injection interceptors
-                  // typically reach the top frame only — cross-origin iframe
-                  // media (the 2embed case) is caught by the all-frames relay
-                  // instead. Returning the request unchanged always continues
-                  // it; we only observe.
-                  shouldInterceptFetchRequest:
-                      (controller, fetchRequest) async {
-                    final url = fetchRequest.url.toString();
-                    if (WebViewPlayerScreen.isMediaUrl(url)) {
-                      debugPrint('FILMKU_WEBVIEW_CAPTURE fetch=$url');
-                      _setNativeStream(url, Duration.zero, via: 'fetch');
-                    }
-                    return fetchRequest;
-                  },
-                  shouldInterceptAjaxRequest: (controller, ajaxRequest) async {
-                    final url = ajaxRequest.url.toString();
-                    if (WebViewPlayerScreen.isMediaUrl(url)) {
-                      debugPrint('FILMKU_WEBVIEW_CAPTURE ajax=$url');
-                      _setNativeStream(url, Duration.zero, via: 'ajax');
-                    }
-                    return ajaxRequest;
-                  },
-                  onLoadStop: (controller, url) async {
-                    if (mounted) {
-                      setState(() {
-                        _loading = false;
-                        // A main document loaded: a network-level error fired
-                        // during the redirect chain is no longer valid — clear
-                        // it so the error UI never covers a working player.
-                        // HTTP status errors are the real final state and are
-                        // kept.
-                        if (!_httpError) _error = null;
-                      });
-                    }
-                    // Re-inject the script into the top frame (idempotent): on
-                    // devices where the document-start script was too late for
-                    // the initial load, this still arms the ad-strip + relay.
-                    try {
-                      await controller.evaluateJavascript(
-                        source: WebViewPlayerScreen._allFramesJs,
-                      );
-                    } catch (_) {}
-                  },
-                  // Ad/tracker sub-frame errors fire constantly on these pages.
-                  // Surfacing them covers the playing video with a fake error —
-                  // only a failure of the original embed document (main frame
-                  // at the exact URL we were asked to load) may fail the
-                  // player. This also prevents a hijacked ad frame's error from
-                  // ever covering the still-playing video.
-                  onReceivedError: (controller, request, error) {
-                    if (WebViewPlayerScreen.shouldSurfaceLoadError(
-                          isForMainFrame: request.isForMainFrame,
-                          requestUrl: request.url.toString(),
-                          expectedUrl: widget.args.url,
-                        ) &&
-                        mounted) {
-                      setState(() {
-                        _loading = false;
-                        _httpError = false;
-                        _error = 'Failed to load ${widget.args.sourceLabel}. '
-                            'Check your connection.';
-                      });
-                    }
-                  },
-                  onReceivedHttpError: (controller, request, response) {
-                    // Ad/tracker sub-requests often 404/403 — only fail when
-                    // the main document itself errors. After a redirect (e.g.
-                    // vidsrc.to → vsembed.ru) the URL won't match and the
-                    // source's own page (with its error UI) is shown instead.
-                    if (WebViewPlayerScreen.shouldSurfaceHttpError(
-                          isForMainFrame: request.isForMainFrame,
-                          requestUrl: request.url.toString(),
-                          expectedUrl: widget.args.url,
-                        ) &&
-                        mounted) {
-                      setState(() {
-                        _loading = false;
-                        _httpError = true;
-                        _error = '${widget.args.sourceLabel} returned '
-                            'HTTP ${response.statusCode}.';
-                      });
-                    }
-                  },
-                  // Block popup/popunder ad windows — they hijack taps and can't
-                  // be dismissed. Returning false prevents window.open from
-                  // creating a new window; the player itself runs in this page.
-                  onCreateWindow: (controller, createWindowAction) async {
-                    return false;
-                  },
-                ),
+                      return NavigationActionPolicy.ALLOW;
+                    },
+                    // Ad/tracker sub-resources are answered with an empty 204 so
+                    // their scripts never reach the page — including the
+                    // disable-devtool anti-debug script, which false-positives
+                    // on iOS WKWebView and redirects 2embed's player to a 404.
+                    // Plain .m3u8/.mp4 media loads (also from inside iframes)
+                    // are captured for native handoff. Everything else loads
+                    // normally (return null).
+                    shouldInterceptRequest: (controller, request) async {
+                      final url = request.url.toString();
+                      final host = request.url.host;
+                      if (WebViewPlayerScreen.isDisableDevtoolUrl(url)) {
+                        _adBlocked++;
+                        debugPrint(
+                          'FILMKU_WEBVIEW_BLOCK_DEVTOOL url=$url total=$_adBlocked',
+                        );
+                        return WebResourceResponse(
+                          contentType: 'text/plain',
+                          contentEncoding: 'utf-8',
+                          statusCode: 204,
+                          reasonPhrase: 'Blocked by FilmKU',
+                          data: Uint8List(0),
+                        );
+                      }
+                      if (WebViewPlayerScreen.isAdHost(host)) {
+                        _adBlocked++;
+                        debugPrint(
+                          'FILMKU_WEBVIEW_ADBLOCK host=$host total=$_adBlocked',
+                        );
+                        // Throttle UI updates — ad requests can burst.
+                        if (mounted &&
+                            (_adBlocked <= 2 || _adBlocked % 5 == 0)) {
+                          setState(() {});
+                        }
+                        return WebResourceResponse(
+                          contentType: 'text/plain',
+                          contentEncoding: 'utf-8',
+                          statusCode: 204,
+                          reasonPhrase: 'Blocked by FilmKU',
+                          data: Uint8List(0),
+                        );
+                      }
+                      if (WebViewPlayerScreen.isMediaUrl(url)) {
+                        debugPrint('FILMKU_WEBVIEW_CAPTURE url=$url');
+                        _setNativeStream(
+                          url,
+                          Duration.zero,
+                          via: 'intercept',
+                        );
+                      }
+                      return null;
+                    },
+                    // fetch()/XHR media loads (e.g. a JS player fetching the HLS
+                    // manifest). NOTE: on Android these JS-injection interceptors
+                    // typically reach the top frame only — cross-origin iframe
+                    // media (the 2embed case) is caught by the all-frames relay
+                    // instead. Returning the request unchanged always continues
+                    // it; we only observe.
+                    shouldInterceptFetchRequest:
+                        (controller, fetchRequest) async {
+                      final url = fetchRequest.url.toString();
+                      if (WebViewPlayerScreen.isMediaUrl(url)) {
+                        debugPrint('FILMKU_WEBVIEW_CAPTURE fetch=$url');
+                        _setNativeStream(url, Duration.zero, via: 'fetch');
+                      }
+                      return fetchRequest;
+                    },
+                    shouldInterceptAjaxRequest:
+                        (controller, ajaxRequest) async {
+                      final url = ajaxRequest.url.toString();
+                      if (WebViewPlayerScreen.isMediaUrl(url)) {
+                        debugPrint('FILMKU_WEBVIEW_CAPTURE ajax=$url');
+                        _setNativeStream(url, Duration.zero, via: 'ajax');
+                      }
+                      return ajaxRequest;
+                    },
+                    onLoadStop: (controller, url) async {
+                      if (mounted) {
+                        setState(() {
+                          _loading = false;
+                          // A main document loaded: a network-level error fired
+                          // during the redirect chain is no longer valid — clear
+                          // it so the error UI never covers a working player.
+                          // HTTP status errors are the real final state and are
+                          // kept.
+                          if (!_httpError) _error = null;
+                        });
+                      }
+                      // Re-inject the script into the top frame (idempotent): on
+                      // devices where the document-start script was too late for
+                      // the initial load, this still arms the ad-strip + relay.
+                      try {
+                        await controller.evaluateJavascript(
+                          source: WebViewPlayerScreen._allFramesJs,
+                        );
+                      } catch (_) {}
+                    },
+                    // Ad/tracker sub-frame errors fire constantly on these pages.
+                    // Surfacing them covers the playing video with a fake error —
+                    // only a failure of the original embed document (main frame
+                    // at the exact URL we were asked to load) may fail the
+                    // player. This also prevents a hijacked ad frame's error from
+                    // ever covering the still-playing video.
+                    onReceivedError: (controller, request, error) {
+                      if (WebViewPlayerScreen.shouldSurfaceLoadError(
+                            isForMainFrame: request.isForMainFrame,
+                            requestUrl: request.url.toString(),
+                            expectedUrl: widget.args.url,
+                          ) &&
+                          mounted) {
+                        setState(() {
+                          _loading = false;
+                          _httpError = false;
+                          _error = 'Failed to load ${widget.args.sourceLabel}. '
+                              'Check your connection.';
+                        });
+                      }
+                    },
+                    onReceivedHttpError: (controller, request, response) {
+                      // Ad/tracker sub-requests often 404/403 — only fail when
+                      // the main document itself errors. After a redirect (e.g.
+                      // vidsrc.to → vsembed.ru) the URL won't match and the
+                      // source's own page (with its error UI) is shown instead.
+                      if (WebViewPlayerScreen.shouldSurfaceHttpError(
+                            isForMainFrame: request.isForMainFrame,
+                            requestUrl: request.url.toString(),
+                            expectedUrl: widget.args.url,
+                          ) &&
+                          mounted) {
+                        setState(() {
+                          _loading = false;
+                          _httpError = true;
+                          _error = '${widget.args.sourceLabel} returned '
+                              'HTTP ${response.statusCode}.';
+                        });
+                      }
+                    },
+                    // Block popup/popunder ad windows — they hijack taps and can't
+                    // be dismissed. Returning false prevents window.open from
+                    // creating a new window; the player itself runs in this page.
+                    onCreateWindow: (controller, createWindowAction) async {
+                      return false;
+                    },
+                  ),
                 // Back + close — always accessible (immersive mode hides the
                 // system back affordances). Back first pops WebView history so
                 // the user can escape an ad page and return to the video.
