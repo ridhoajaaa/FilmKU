@@ -438,6 +438,9 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
           ...PlayerScreen.buildStreamHeaders(source.embedUrl),
           ...stream.httpHeaders,
         },
+        // Enables EXTERNAL subtitles (keyless YIFY, Indonesian-first) when
+        // the stream has no subtitle tracks of its own.
+        tmdbId: widget.movieId,
       ),
     );
     if (!mounted) return;

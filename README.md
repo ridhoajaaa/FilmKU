@@ -419,6 +419,33 @@ flutter doctor   # Android toolchain should be green
 
 ## 📝 Changelog
 
+### `2026-08-05` — v1.3.19: Subtitle Indonesia eksternal (YIFY, tanpa API key) — film jadul akhirnya ada teksnya
+
+- **Akar masalah (dibuktikan di device):** stream 2Embed/2vcdn TIDAK punya
+  track subtitle sama sekali — master playlist-nya 144 byte dengan NOL
+  baris `#EXT-X-MEDIA`. Jadi "tidak pernah ada subtitle" bukan bug pemutar,
+  melainkan stream-nya memang kosong. Bukti log: `FILMKU_MPV_TRACKS` selalu
+  `subtitle=0`.
+- **Fitur baru `SubtitleDatasource`:** TMDB id → IMDB id (`external_ids`) →
+  YIFY subtitles (`yifysubtitles.ch/movie-imdb/{tt}`, gratis, tanpa API key)
+  → pilih bahasa **Indonesia, fallback English** → download `.zip` →
+  ekstrak `.srt` → render via libmpv (`SubtitleTrack.data`).
+- **Fix kritikal Cloudflare:** download `.zip` YIFY ditolak 403 ("Just a
+  moment…") tanpa header `Referer`. Sekarang kirim `Referer` = halaman
+  detail subtitle. Dibuktikan dari laptop: UA+Referer → HTTP 200 zip asli
+  39KB; UA saja → 403 challenge. Tanpa ini seluruh alur subtitle diam-diam
+  gagal (`null`).
+- **Filter slug:** hanya link `-yify-{id}` yang dianggap subtitle asli
+  (link navigasi `/subtitles/popular` dst. diabaikan) + fallback ekstrak
+  memilih file teks terbesar di dalam zip.
+- **Best-effort penuh:** subtitle di-fetch di latar belakang (timeout 20s);
+  kegagalan apa pun (film tidak ada di YIFY, jaringan, 403) di-swallow —
+  playback TIDAK pernah terhambat. Auto-load hanya saat stream tidak punya
+  track subtitle native.
+- 213/213 test pass (+15 test subtitle: parser, Referer header, fallback
+  bahasa, edge case slug/zip).
+
+
 ### `2026-08-05` — v1.3.18: replay bug fixed (stale relay URL) + subtitles auto-select
 
 - **Replay bug fixed.** Closing a movie (X) then replaying the SAME movie

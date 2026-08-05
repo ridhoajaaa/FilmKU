@@ -8,6 +8,7 @@ import 'package:media_kit_video/media_kit_video.dart';
 
 import '../../../../core/media/mini_player_service.dart';
 import '../../../../core/utils/app_logger.dart';
+import '../../data/datasources/subtitle_datasource.dart';
 import '../widgets/error_view.dart';
 import '../widgets/mpv_controls_overlay.dart';
 import '../widgets/player_swipe_dismiss.dart';
@@ -20,6 +21,7 @@ class MpvPlayerArgs {
     required this.sourceLabel,
     this.startAt = Duration.zero,
     this.httpHeaders = const <String, String>{},
+    this.tmdbId,
   });
 
   /// Direct `.m3u8`/`.mp4` URL captured from inside the WebView fallback.
@@ -33,6 +35,11 @@ class MpvPlayerArgs {
 
   /// Where the WebView playback was, to resume from.
   final Duration startAt;
+
+  /// TMDB id of the movie — used to fetch EXTERNAL subtitles (YIFY,
+  /// keyless) when the stream itself has no subtitle tracks (the common
+  /// case: 2vcdn playlists carry zero `#EXT-X-MEDIA` lines).
+  final int? tmdbId;
 
   /// Extra HTTP headers sent on every request to the stream CDN (mpv's
   /// `http-header-fields`).
@@ -228,6 +235,7 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
       title: widget.args.title,
       sourceLabel: widget.args.sourceLabel,
       httpHeaders: widget.args.httpHeaders,
+      tmdbId: widget.args.tmdbId,
     );
     if (!mounted) return;
     _player = session.player;
@@ -237,6 +245,10 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
     _listenForPlayback();
     if (session.fresh) {
       await _open();
+      // Streams rarely carry subtitle tracks (2vcdn has none) — fetch an
+      // EXTERNAL subtitle (Indonesian, keyless YIFY) in the background so
+      // playback is never delayed by it.
+      unawaited(_loadExternalSubtitles());
     } else {
       // Resumed from the mini player: seed the playback evidence from the
       // LIVE position. If the stream already advanced past zero it is proven
@@ -250,6 +262,39 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
       _lastWatchPosition = pos;
       _startWatchdogs(withStartup: !_sawPlaying);
       appLog('FILMKU_MPV_RESUMED', '(mini player → fullscreen)');
+      // Resume path: if the session never attached external subs (e.g. the
+      // fetch failed while the screen was up) and the stream still has none,
+      // try again.
+      unawaited(_loadExternalSubtitles());
+    }
+  }
+
+  /// Fetches an EXTERNAL subtitle for the movie (Indonesian preferred, then
+  /// English) and attaches it via media_kit's `SubtitleTrack.data`. Only runs
+  /// when the stream itself has NO subtitle tracks (native wins). Background
+  /// best-effort: any failure is swallowed — playback is never affected.
+  Future<void> _loadExternalSubtitles() async {
+    final tmdbId = widget.args.tmdbId;
+    if (tmdbId == null || _failed) return;
+    // The stream already carries subtitle tracks — native wins.
+    if (_player.state.tracks.subtitle.isNotEmpty) return;
+    try {
+      final sub = await SubtitleDatasource()
+          .fetchSubtitle(tmdbId)
+          .timeout(const Duration(seconds: 20));
+      if (!mounted || _failed || sub == null) return;
+      // Re-check after the fetch: native tracks may have appeared in the
+      // meantime (or the user closed / playback failed over).
+      if (_player.state.tracks.subtitle.isNotEmpty) return;
+      await _player.setSubtitleTrack(
+        SubtitleTrack.data(sub.data, title: sub.title, language: sub.language),
+      );
+      appLog(
+        'FILMKU_SUBS',
+        'loaded ${sub.language} ${sub.data.length} chars tmdbId=$tmdbId',
+      );
+    } catch (error) {
+      appLog('FILMKU_SUBS', 'failed tmdbId=$tmdbId $error');
     }
   }
 

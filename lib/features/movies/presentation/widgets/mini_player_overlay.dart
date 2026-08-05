@@ -140,6 +140,7 @@ class _MiniPlayerOverlayState extends State<MiniPlayerOverlay> {
           title: session.title,
           sourceLabel: session.sourceLabel,
           httpHeaders: session.httpHeaders,
+          tmdbId: session.tmdbId,
         ),
       );
     } catch (_) {

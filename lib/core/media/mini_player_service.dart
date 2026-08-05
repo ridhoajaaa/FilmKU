@@ -18,6 +18,7 @@ class MiniPlayerSession {
     required this.title,
     required this.sourceLabel,
     required this.httpHeaders,
+    this.tmdbId,
   });
 
   final Player player;
@@ -28,6 +29,9 @@ class MiniPlayerSession {
   final String title;
   final String sourceLabel;
   final Map<String, String> httpHeaders;
+
+  /// TMDB id of the movie (for external-subtitle fetches on re-expand).
+  final int? tmdbId;
 
   /// True when [acquire] created this session (the caller must open the
   /// media); false when it reused an existing one (playback already running).
@@ -65,6 +69,7 @@ class MiniPlayerService extends ChangeNotifier {
     required String title,
     required String sourceLabel,
     Map<String, String> httpHeaders = const <String, String>{},
+    int? tmdbId,
   }) async {
     final existing = _session;
     if (existing != null && existing.url == url) {
@@ -103,6 +108,7 @@ class MiniPlayerService extends ChangeNotifier {
       title: title,
       sourceLabel: sourceLabel,
       httpHeaders: httpHeaders,
+      tmdbId: tmdbId,
     )..fresh = true;
     _minimized = false;
     notifyListeners();
