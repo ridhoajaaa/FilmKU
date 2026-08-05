@@ -80,16 +80,24 @@ class HlsRelay {
   /// URL for [masterUrl], or null if the master cannot be fetched.
   Future<String?> serve(String masterUrl) async {
     try {
-      // Warm up: fetch + rewrite once so failures surface here (synchronously
-      // at handoff time) instead of mid-playback — BEFORE binding, so a
-      // failed validation never leaks a bound-but-unused server (reviewer
-      // finding 2026-08).
+      // Bind FIRST: rewriting playlists builds the relay URIs from the
+      // loopback port, so the server must exist before `_rewritePlaylist`
+      // runs. The earlier bind-after-validate order dereferenced a NULL
+      // `_server` inside `_relayUri` (Null check operator used on a null
+      // value) which the swallow-all catch turned into a silent null — the
+      // on-device `relay=failed` root cause (2026-08 syslog: the direct m3u8
+      // extracted fine, `twoVcdnDirect=...` set, but `relay=failed`). The
+      // bind is single-flight via [_ensureBound], and an invalid master
+      // disposes the server again, so no bound-but-unused server leaks.
+      await _ensureBound();
       final body = await _fetch(masterUrl);
       final rewritten = _rewritePlaylist(body, masterUrl);
-      if (!rewritten.isValid) return null;
-      await _ensureBound();
-      final port = _server!.port;
-      return 'http://127.0.0.1:$port/master.m3u8?src=${Uri.encodeComponent(masterUrl)}';
+      if (!rewritten.isValid) {
+        await dispose();
+        return null;
+      }
+      return 'http://127.0.0.1:${_server!.port}/master.m3u8'
+          '?src=${Uri.encodeComponent(masterUrl)}';
     } catch (_) {
       return null;
     }

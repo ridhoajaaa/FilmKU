@@ -1,13 +1,15 @@
 // ignore_for_file: avoid_print
 //
-// Standalone E2E for the 2vcdn direct-extraction + HLS-relay pipeline
-// (pure dart:io + dio — no Flutter imports, so `dart run` compiles it alone).
+// Standalone E2E for the 2vcdn direct-extraction + HLS-relay pipeline.
+// Extraction logic is replicated here (pure dart:io + dio, no Flutter), but
+// the RELAY part uses the REAL HlsRelay class (lib/core/net/hls_relay.dart —
+// also Flutter-free) so this verifies exactly what the app does on-device.
 //
 // Usage:
 //   dart run tool/relay_e2e_standalone.dart 969681
 //
 // Extracts the direct 2vcdn .m3u8 (Dean-Edwards packer, radix 36), serves it
-// through a local relay that strips the fake-PNG wrapper from segments, and
+// through [HlsRelay] which strips the fake-PNG wrapper from segments, and
 // prints the relay URL. While it runs, verify with:
 //   mpv http://127.0.0.1:{port}/master.m3u8?src=...
 import 'dart:async';
@@ -16,6 +18,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
+import 'package:filmku/core/net/hls_relay.dart';
 
 final dio = Dio(BaseOptions(
   headers: {
@@ -186,7 +189,7 @@ Uint8List stripPngWrapper(Uint8List bytes) {
 
 Future<void> main(List<String> args) async {
   final tmdbId = args.isNotEmpty ? args[0] : '969681';
-  print('=== E2E: tmdb=$tmdbId ===');
+  print('=== E2E (real HlsRelay): tmdb=$tmdbId ===');
 
   final direct = await extractDirect(tmdbId);
   print('direct: $direct');
@@ -195,79 +198,21 @@ Future<void> main(List<String> args) async {
     return;
   }
 
-  final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-  final port = server.port;
-  server.listen((request) async {
-    try {
-      final src = request.uri.queryParameters['src'];
-      if (src == null) {
-        request.response.statusCode = 400;
-        await request.response.close();
-        return;
-      }
-      if (request.uri.path.endsWith('.m3u8')) {
-        final body = await fetchString(src);
-        final base = Uri.parse(src);
-        final out = <String>[];
-        final uriAttr = RegExp('URI="([^"]*)"');
-        for (final rawLine in body.split('\n')) {
-          final line = rawLine.trimRight();
-          if (line.isEmpty) {
-            out.add(rawLine);
-            continue;
-          }
-          if (line.startsWith('#')) {
-            out.add(line.replaceAllMapped(uriAttr, (m) {
-              final ref = m.group(1)!;
-              final resolved =
-                  ref.startsWith('http') ? ref : base.resolve(ref).toString();
-              final p = resolved.toLowerCase().endsWith('.m3u8')
-                  ? 'media.m3u8'
-                  : 'segment.ts';
-              return 'URI="http://127.0.0.1:$port/$p'
-                  '?src=${Uri.encodeComponent(resolved)}"';
-            }));
-            continue;
-          }
-          final resolved =
-              line.startsWith('http') ? line : base.resolve(line).toString();
-          final p = resolved.toLowerCase().endsWith('.m3u8')
-              ? 'media.m3u8'
-              : 'segment.ts';
-          out.add('http://127.0.0.1:$port/$p'
-              '?src=${Uri.encodeComponent(resolved)}');
-        }
-        request.response.headers.contentType =
-            ContentType('application', 'vnd.apple.mpegurl');
-        request.response.add(utf8.encode(out.join('\n')));
-      } else {
-        final raw = await dio
-            .get<List<int>>(src,
-                options: Options(responseType: ResponseType.bytes))
-            .then((r) => r.data ?? const <int>[]);
-        final ts = stripPngWrapper(Uint8List.fromList(raw));
-        request.response.headers.contentType = ContentType('video', 'mp2t');
-        request.response.add(ts);
-      }
-      await request.response.close();
-    } catch (_) {
-      try {
-        request.response.statusCode = 502;
-        await request.response.close();
-      } catch (_) {}
-    }
-  });
-
-  final relayUrl = 'http://127.0.0.1:$port/master.m3u8'
-      '?src=${Uri.encodeComponent(direct)}';
+  // REAL relay — the exact code path the app uses on-device.
+  final relayUrl = await HlsRelay.instance.serve(direct);
   print('relayUrl: $relayUrl');
+  if (relayUrl == null) {
+    print(
+        'FAILED: HlsRelay.serve returned null (mirrors on-device relay=failed)');
+    return;
+  }
 
   final master = await fetchString(relayUrl);
   final uris = master.split('\n').where((l) => l.startsWith('http')).toList();
   print('master via relay: ${master.length} chars, uris=${uris.length}');
   if (uris.isEmpty) {
     print('FAILED: master has no uris');
-    await server.close(force: true);
+    await HlsRelay.instance.dispose();
     return;
   }
   print('first uri: ${uris.first}');
@@ -278,7 +223,7 @@ Future<void> main(List<String> args) async {
   print('variant via relay: ${variant.length} chars, segs=${segUris.length}');
   if (segUris.isEmpty) {
     print('FAILED: no segment uris');
-    await server.close(force: true);
+    await HlsRelay.instance.dispose();
     return;
   }
   final seg = await dio
@@ -294,9 +239,9 @@ Future<void> main(List<String> args) async {
   print('=== READY: $relayUrl ===');
   if (syncOk) {
     stdout.writeln('MPV_PLAY=$relayUrl');
-    // Keep the server up so mpv can be pointed at the URL from another shell.
+    // Keep the relay up so mpv can be pointed at the URL from another shell.
     await Future<void>.delayed(const Duration(hours: 2));
   } else {
-    await server.close(force: true);
+    await HlsRelay.instance.dispose();
   }
 }

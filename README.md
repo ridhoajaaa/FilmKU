@@ -389,6 +389,29 @@ flutter doctor   # Android toolchain should be green
 
 ## 📝 Changelog
 
+### `2026-08-05` — v1.3.12: fix silent HlsRelay null-server crash — `relay=failed` on-device
+
+- **On-device iOS syslog catch (2026-08-05):** extraction SUCCEEDED on the iPhone
+  (`FILMKU_EXTRACT_TRY sourceId=two_embed_skin twoVcdnDirect=https://2vcdn.skin/stream/.../master.m3u8`)
+  but logged `relay=failed` — `HlsRelay.serve()` returned null and the movie fell
+  through to the WebView (spinner forever).
+- **Root cause:** the reviewer's bind-after-validate ordering made `serve()` rewrite
+  the master playlist BEFORE binding the loopback server; `_relayUri()` dereferenced a
+  NULL `_server.port` (Null check operator on null), which the swallow-all catch
+  turned into a silent null. The Linux E2E passed only because the standalone tool
+  used its own inline server (bound first) — the REAL `HlsRelay.serve()` had never
+  been exercised end-to-end.
+- **Fix:** `serve()` binds FIRST (single-flight), then fetches + rewrites; an invalid
+  master disposes the server again (no bound-but-unused leak).
+- **Tests that would have caught it:** NEW `test/hls_relay_serve_test.dart` drives the
+  REAL `HlsRelay.serve()` against a loopback fake CDN (master → variant → PNG-wrapped
+  TS segment), asserting the relay URL is non-null and the rewritten chain serves
+  clean 0x47 TS — in a binding-free file, because TestWidgetsFlutterBinding mocks
+  every HTTP request with 400. Also a null-for-no-media-lines case.
+- **Re-verified with the REAL relay:** `dart run tool/relay_e2e_standalone.dart`
+  (now uses `HlsRelay.serve()` instead of an inline server) → `relayUrl` non-null →
+  real mpv decoded h264 1728x720 + AAC, exit 0. 175/175 tests pass, analyze clean.
+
 ### `2026-08-05` — v1.3.11: 2Embed direct HLS extraction + local PNG-strip relay — THE iOS native fix
 
 - **Root cause, finally solved with byte-level proof.** Every previous fix fought the WebView on iOS
