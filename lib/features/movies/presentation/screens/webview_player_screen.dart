@@ -335,10 +335,18 @@ class _WebViewPlayerScreenState extends State<WebViewPlayerScreen> {
   bool _tapAttempted = false;
 
   /// 2embed.skin's shell redirects to a DEAD 2embed.cc embed (iOS: NSURLError
-  /// -999 kills the player iframe — v1.3.8 syslog). Resolve the shell to its
-  /// direct JW-player URL (`2vcdn.skin/e/{sid}`) via plain HTTP and load THAT
-  /// instead: the player page serves plain .m3u8 on its own CDN and strips its
-  /// own ads (verified headless 2026-08).
+  /// -999 kills the player iframe — v1.3.8 syslog). Resolve the shell to the
+  /// player page that actually serves the stream via plain HTTP and load THAT
+  /// instead:
+  /// - LEGACY chain: `swish?id={sid}` → `2vcdn.skin/e/{sid}` (JW Player,
+  ///   plain .m3u8 on its own CDN, strips its own ads — verified headless
+  ///   2026-08).
+  /// - NEW chain (2026-08 rotation): `vnest?tmdb={id}` →
+  ///   `streamsrcs.2embed.cc/vnest?tmdb={id}` whose `vnest.js` rewrites the
+  ///   player iframe to `cineby.hair/movie/{id}?autostart=true` (browser-only
+  ///   Next.js → VidNest player; no direct m3u8, so no native fast path — but
+  ///   loading the vnest player page directly is still the CORRECT WebView
+  ///   target instead of the dead swish shell).
   String _resolvedUrl = '';
 
   /// True once resolution finished (success OR failure). Keying off
@@ -351,11 +359,16 @@ class _WebViewPlayerScreenState extends State<WebViewPlayerScreen> {
       _resolvedUrl.isEmpty ? widget.args.url : _resolvedUrl;
 
   bool get _resolvingPlayer {
-    return widget.args.url.contains('2embed.skin') && !_resolveDone;
+    // Both 2Embed domains (`.skin` and legacy `.cc`) serve the rotating
+    // swish/vnest chain — resolve the shell for either.
+    return StreamSourceDataSource.isTwoEmbedShellUrl(widget.args.url) &&
+        !_resolveDone;
   }
 
   Future<void> _resolveTwoEmbedPlayer() async {
-    if (!widget.args.url.contains('2embed.skin')) return;
+    if (!StreamSourceDataSource.isTwoEmbedShellUrl(widget.args.url)) return;
+    // Resolves to the legacy 2vcdn player OR the new vnest player page —
+    // whichever the shell currently exposes (see fetchTwoEmbedPlayerUrl).
     final resolved =
         await StreamSourceDataSource.fetchTwoEmbedPlayerUrl(widget.args.url);
     if (!mounted) return;

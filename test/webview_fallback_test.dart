@@ -850,6 +850,75 @@ void main() {
       expect(StreamSourceDataSource.resolveTwoEmbedSwishId(html), isNull);
       expect(StreamSourceDataSource.buildTwoEmbedPlayerUrl(html), isNull);
     });
+
+    test('parses the NEW vnest tmdb from shell data-src (2026-08 rotation)',
+        () {
+      const html = '<iframe id="iframesrc" src="about:blank" '
+          'data-src="https://streamsrcs.2embed.cc/vnest?tmdb=634649"></iframe>';
+      expect(StreamSourceDataSource.resolveTwoEmbedVnestTmdb(html), '634649');
+      expect(
+        StreamSourceDataSource.buildTwoEmbedVnestUrl(html),
+        'https://streamsrcs.2embed.cc/vnest?tmdb=634649',
+      );
+    });
+
+    test('vnest parser decodes entity-encoded ampersands', () {
+      const html = '<iframe '
+          'data-src="https://streamsrcs.2embed.cc/vnest?tmdb=969681'
+          '&amp;x=1"></iframe>';
+      expect(StreamSourceDataSource.resolveTwoEmbedVnestTmdb(html), '969681');
+    });
+
+    test('vnest parser returns null when the shell uses the legacy swish', () {
+      const html = '<iframe '
+          'data-src="https://streamsrcs.2embed.cc/swish?id=ab12cd34'
+          '&ref=mdrct"></iframe>';
+      expect(StreamSourceDataSource.resolveTwoEmbedVnestTmdb(html), isNull);
+      expect(StreamSourceDataSource.buildTwoEmbedVnestUrl(html), isNull);
+    });
+
+    test('resolution builders cover BOTH chains (legacy swish + new vnest)',
+        () {
+      // Legacy chain wins when both structures are present (native playable).
+      const legacy = '<iframe '
+          'data-src="https://streamsrcs.2embed.cc/swish?id=4rc2jaa92ugh'
+          '&ref=mdrct" data-x="https://streamsrcs.2embed.cc/vnest?tmdb=1">'
+          '</iframe>';
+      // No live network here — the pure builders decide the priority.
+      expect(
+        StreamSourceDataSource.buildTwoEmbedPlayerUrl(legacy),
+        'https://2vcdn.skin/e/4rc2jaa92ugh',
+      );
+      // Vnest-only shell → the new player page is the resolution target.
+      const vnest = '<iframe '
+          'data-src="https://streamsrcs.2embed.cc/vnest?tmdb=155"></iframe>';
+      expect(StreamSourceDataSource.buildTwoEmbedPlayerUrl(vnest), isNull);
+      expect(
+        StreamSourceDataSource.buildTwoEmbedVnestUrl(vnest),
+        'https://streamsrcs.2embed.cc/vnest?tmdb=155',
+      );
+    });
+
+    test('isTwoEmbedShellUrl covers both .skin and legacy .cc domains', () {
+      expect(
+        StreamSourceDataSource.isTwoEmbedShellUrl(
+          'https://www.2embed.skin/embed/movie/155',
+        ),
+        isTrue,
+      );
+      expect(
+        StreamSourceDataSource.isTwoEmbedShellUrl(
+          'https://www.2embed.cc/embed/movie/155',
+        ),
+        isTrue,
+      );
+      expect(
+        StreamSourceDataSource.isTwoEmbedShellUrl(
+            'https://vidlink.pro/movie/155'),
+        isFalse,
+      );
+      expect(StreamSourceDataSource.isTwoEmbedShellUrl(''), isFalse);
+    });
   });
 
   group('StreamSourceDataSource.isTwoEmbedKillerNavigation', () {
@@ -901,6 +970,45 @@ void main() {
       expect(
         StreamSourceDataSource.isTwoEmbedKillerNavigation(
           'https://vidlink.pro/movie/155',
+        ),
+        isFalse,
+      );
+    });
+    test('cancels the NEW vnest anti-frame root redirect (2026-08)', () {
+      // The vnest page's guard: `location.replace("https://www.2embed.cc/")`
+      // — with and without www, root only.
+      expect(
+        StreamSourceDataSource.isTwoEmbedKillerNavigation(
+          'https://www.2embed.cc/',
+        ),
+        isTrue,
+      );
+      expect(
+        StreamSourceDataSource.isTwoEmbedKillerNavigation(
+            'https://www.2embed.cc'),
+        isTrue,
+      );
+      expect(
+        StreamSourceDataSource.isTwoEmbedKillerNavigation('https://2embed.cc/'),
+        isTrue,
+      );
+      // The REAL 2embed.cc embed pages keep their path — never cancelled.
+      expect(
+        StreamSourceDataSource.isTwoEmbedKillerNavigation(
+          'https://www.2embed.cc/embed/movie/1481343',
+        ),
+        isFalse,
+      );
+      // The vnest player page itself and its cineby target stay allowed.
+      expect(
+        StreamSourceDataSource.isTwoEmbedKillerNavigation(
+          'https://streamsrcs.2embed.cc/vnest?tmdb=155',
+        ),
+        isFalse,
+      );
+      expect(
+        StreamSourceDataSource.isTwoEmbedKillerNavigation(
+          'https://cineby.hair/movie/155?autostart=true',
         ),
         isFalse,
       );

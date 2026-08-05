@@ -201,11 +201,14 @@ class _HiddenStreamCaptureState extends State<HiddenStreamCapture> {
   String get _effectiveUrl => _resolvedUrl.isEmpty ? widget.url : _resolvedUrl;
 
   bool get _resolvingPlayer {
-    return widget.url.contains('2embed.skin') && !_resolveDone;
+    // Both 2Embed domains (`.skin` and legacy `.cc`) serve the rotating
+    // swish/vnest chain — resolve the shell for either.
+    return StreamSourceDataSource.isTwoEmbedShellUrl(widget.url) &&
+        !_resolveDone;
   }
 
   Future<void> _resolveTwoEmbedPlayer() async {
-    if (!widget.url.contains('2embed.skin')) return;
+    if (!StreamSourceDataSource.isTwoEmbedShellUrl(widget.url)) return;
     final resolved =
         await StreamSourceDataSource.fetchTwoEmbedPlayerUrl(widget.url);
     if (!mounted) return;

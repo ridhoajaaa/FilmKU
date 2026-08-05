@@ -739,7 +739,11 @@ class TwoEmbedSkinExtractor extends StreamExtractor {
     // 2026-08 on-device evidence fix: the JW player never ran in the iOS
     // WebView (JS-pause on cancelled navigation), so WebView-based capture
     // could never see the stream — but the URL itself was always there.
-    if (playerUrl != null) {
+    //
+    // ONLY for the legacy 2vcdn chain: the NEW vnest player (2026-08
+    // rotation) is a browser-only Next.js → VidNest chain with no direct
+    // m3u8, so trying to unpack its page would just burn the 8s timeout.
+    if (playerUrl != null && playerUrl.contains('2vcdn.skin')) {
       final direct =
           await StreamSourceDataSource.fetchTwoVcdnStreamUrl(playerUrl);
       if (direct != null) {
@@ -981,16 +985,20 @@ class StreamSourceDataSource {
     return !(lower.contains('headers=%7b%7d') || lower.contains('headers={}'));
   }
 
-  /// Neutralises the 2vcdn anti-framing guard (`if(window==window.top)
-  /// location.replace("/")`) at the JS level, BEFORE the page's own script
-  /// runs (inject at document-start, top frame only).
+  /// Neutralises the 2embed anti-framing guards at the JS level, BEFORE the
+  /// page's own script runs (inject at document-start, top frame only):
   ///
-  /// On-device evidence (2026-08, iOS): cancelling the `/` navigation in
+  /// - `2vcdn.skin/e/{sid}`: `if(window==window.top) location.replace("/")`
+  ///   — the JW player only runs when this redirect is stopped.
+  /// - `streamsrcs.2embed.cc/vnest`: `location.replace("https://www.2embed.cc/")
+  ///   ` — the NEW 2026-08 chain guard; same mechanism, different target.
+  ///
+  /// On-device evidence (2026-08, iOS): cancelling these navigations in
   /// `shouldOverrideUrlLoading` makes the page LOAD (LOADSTOP fires) but the
-  /// JW player never requests its `.m3u8` — WKWebView pauses the page's JS
-  /// when a top-level navigation is initiated, so `jwplayer.setup` never
-  /// executes. Overriding `Location.prototype.replace` to no-op the root
-  /// redirect means the guard never initiates a navigation at all: the page
+  /// player never requests its `.m3u8` — WKWebView pauses the page's JS
+  /// when a top-level navigation is initiated, so the player setup never
+  /// executes. Overriding `Location.prototype.replace` to no-op the guard
+  /// redirects means the guard never initiates a navigation at all: the page
   /// stays top-level, its JS runs uninterrupted, and the player requests the
   /// playlist like the framed (proven) case. The `shouldOverrideUrlLoading`
   /// cancel is kept as a belt-and-suspenders for engines where the override
@@ -1004,8 +1012,18 @@ class StreamSourceDataSource {
       'L.replace=function(u){'
       'var s=String(u||"");'
       'if(s==="/"||s==="")return;'
+      // Only the BARE-ROOT guard redirect (`https://www.2embed.cc/`) is
+      // no-op'd — a real embed navigation (`/embed/movie/{id}`) must still
+      // proceed (first-slash heuristics wrongly match `https://` itself).
+      r'if(/^https?:\/\/(www\.)?2embed\.cc\/?$/i.test(s))return;'
       'return o.apply(this,arguments);};}'
       '}catch(e){}}})();';
+
+  /// Whether [url] is a 2Embed shell page whose player must be resolved
+  /// before the WebView loads it (both the `.skin` AND legacy `.cc` domains
+  /// serve the same rotating `swish`/`vnest` chain — 2026-08 evidence).
+  static bool isTwoEmbedShellUrl(String url) =>
+      url.contains('2embed.skin') || url.contains('2embed.cc');
 
   /// Whether a URL is a local HLS relay URL produced by [HlsRelay.serve]
   /// (`http://127.0.0.1:{port}/master.m3u8?src={original}`).
@@ -1048,13 +1066,18 @@ class StreamSourceDataSource {
 
   /// Extracts the 2embed player session id (`sid`) from the shell page HTML.
   ///
-  /// The 2embed.skin shell (`/embed/movie/{id}`) embeds its real player with
-  /// `data-src="https://streamsrcs.2embed.cc/swish?id={sid}&ref=mdrct"`. The
-  /// player itself lives at `2vcdn.skin/e/{sid}` (JW Player) and serves plain
-  /// `.m3u8` playlists on `2vcdn.skin/stream/...` (verified headless 2026-08:
-  /// framed load produced `master.m3u8` + `index-v1-a1.m3u8`). Loading the
-  /// player URL DIRECTLY bypasses the ad shell, its disable-devtool script and
-  /// its dead `2embed.cc` redirect — the iOS native-playback fix.
+  /// The 2embed.skin shell (`/embed/movie/{id}`) historically embedded its
+  /// real player with `data-src="https://streamsrcs.2embed.cc/swish?id={sid}
+  /// &ref=mdrct"`, whose player lived at `2vcdn.skin/e/{sid}` (JW Player) and
+  /// served plain `.m3u8` playlists on `2vcdn.skin/stream/...`. Loading the
+  /// player URL DIRECTLY bypassed the ad shell, its disable-devtool script and
+  /// its dead `2embed.cc` redirect — the original iOS native-playback fix.
+  ///
+  /// ⚠️ 2026-08: the 2Embed ecosystem ROTATED the shell to a new chain
+  /// (`streamsrcs.2embed.cc/vnest?tmdb={id}` → `cineby.hair/movie/{id}` →
+  /// VidNest) which no longer exposes a `swish` sid and does not serve a
+  /// direct m3u8 — see [buildTwoEmbedVnestUrl]. This parser is kept for the
+  /// day the backend rotates back (or serves both structures).
   static String? resolveTwoEmbedSwishId(String shellHtml) {
     final cleaned = decodeHtmlEntities(shellHtml);
     final match = RegExp(
@@ -1073,9 +1096,40 @@ class StreamSourceDataSource {
     return 'https://2vcdn.skin/e/$sid';
   }
 
+  /// Extracts the TMDB id from the NEW 2embed shell structure
+  /// (`data-src="https://streamsrcs.2embed.cc/vnest?tmdb={id}"`).
+  ///
+  /// 2026-08 rotation: the shell swapped `swish?id={sid}` for
+  /// `vnest?tmdb={id}` (verified across desktop/mobile/iOS user-agents). The
+  /// vnest page's `vnest.js` then rewrites its player iframe to
+  /// `https://cineby.hair/movie/{tmdb}?autostart=true` — a browser-only
+  /// (Next.js → VidNest) player with NO direct m3u8, so this never feeds the
+  /// native fast path; it only tells the visible WebView which player page to
+  /// load directly instead of the dead `swish` shell.
+  static String? resolveTwoEmbedVnestTmdb(String shellHtml) {
+    final cleaned = decodeHtmlEntities(shellHtml);
+    final match = RegExp(
+      r'data-src="[^"]*streamsrcs[.]2embed[.]cc/vnest[?]tmdb=([0-9]+)',
+      caseSensitive: false,
+    ).firstMatch(cleaned);
+    return match?.group(1);
+  }
+
+  /// Builds the direct vnest player page URL for a 2embed.skin shell page
+  /// (`https://streamsrcs.2embed.cc/vnest?tmdb={id}`), or null when the shell
+  /// does not expose the new vnest structure.
+  static String? buildTwoEmbedVnestUrl(String shellHtml) {
+    final tmdb = resolveTwoEmbedVnestTmdb(shellHtml);
+    if (tmdb == null || tmdb.isEmpty) return null;
+    return 'https://streamsrcs.2embed.cc/vnest?tmdb=$tmdb';
+  }
+
   /// Fetches the 2embed.skin shell page for [embedUrl] (plain HTTP — no
-  /// WebView needed) and resolves its direct JW-player URL, or null on any
-  /// failure (unreachable shell / no swish id).
+  /// WebView needed) and resolves the player page to load INSTEAD of the
+  /// shell: the legacy `2vcdn.skin/e/{sid}` JW player when the shell still
+  /// exposes a swish id, or the NEW `streamsrcs.2embed.cc/vnest?tmdb={id}`
+  /// player when the shell has rotated. Null on any failure (unreachable
+  /// shell / neither structure present).
   static Future<String?> fetchTwoEmbedPlayerUrl(String embedUrl) async {
     final match = RegExp(r'/embed/movie/([0-9]+)').firstMatch(embedUrl);
     if (match == null) return null;
@@ -1085,7 +1139,9 @@ class StreamSourceDataSource {
       // WebView's resolution gate open forever.
       final html =
           await _HtmlFetcher.get(embedUrl).timeout(const Duration(seconds: 8));
-      return buildTwoEmbedPlayerUrl(html);
+      // Legacy chain first (direct m3u8, native-playable); then the new
+      // vnest chain (browser-only, but the correct WebView target).
+      return buildTwoEmbedPlayerUrl(html) ?? buildTwoEmbedVnestUrl(html);
     } catch (_) {
       return null;
     }
@@ -1281,10 +1337,13 @@ class StreamSourceDataSource {
   }
 
   /// Whether a navigation should be cancelled inside a 2embed capture WebView:
-  /// - `2vcdn.skin/` — the player's own anti-framing `location.replace("/")`
-  ///   (`if(window==window.top)`); the player ONLY runs when this redirect is
-  ///   stopped (verified headless 2026-08: the framed load requested the
-  ///   m3u8, the top-level load redirected to `/`).
+  /// - `2vcdn.skin/` — the JW player's own anti-framing
+  ///   `location.replace("/")` (`if(window==window.top)`); the player ONLY
+  ///   runs when this redirect is stopped (verified headless 2026-08: the
+  ///   framed load requested the m3u8, the top-level load redirected to `/`).
+  /// - `www.2embed.cc/` — the NEW (2026-08) vnest chain's anti-frame guard
+  ///   (`location.replace("https://www.2embed.cc/")`); same mechanism, dead
+  ///   landing.
   /// - any `2embed` host navigating to `/movie/movie/` — the shell's redirect
   ///   to the DEAD `2embed.cc` embed that cancels the player iframe on iOS
   ///   (NSURLError -999, v1.3.8 syslog).
@@ -1294,6 +1353,13 @@ class StreamSourceDataSource {
     final host = uri.host.toLowerCase();
     final path = uri.path;
     if (host == '2vcdn.skin' && (path.isEmpty || path == '/')) return true;
+    // The vnest anti-frame guard redirects to the bare `2embed.cc` root (with
+    // or without `www`, no path). The REAL 2embed.cc embed pages
+    // (`/embed/movie/{id}`) keep their path and must NOT be cancelled.
+    if ((host == 'www.2embed.cc' || host == '2embed.cc') &&
+        (path.isEmpty || path == '/')) {
+      return true;
+    }
     if (host.contains('2embed') && path.contains('/movie/movie/')) return true;
     return false;
   }

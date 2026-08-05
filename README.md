@@ -419,6 +419,32 @@ flutter doctor   # Android toolchain should be green
 
 ## 📝 Changelog
 
+### `2026-08-06` — v1.3.22: 2Embed chain rotation — vnest/cineby resolution + anti-frame fix
+
+- **Root cause of the iOS "muter-muter" regression:** on-device + headless
+  probes (2026-08-06) proved the 2Embed ecosystem ROTATED its player chain
+  overnight. The shell (`/embed/movie/{id}`) no longer exposes the legacy
+  `streamsrcs.2embed.cc/swish?id={sid}` player; every user-agent now gets
+  `streamsrcs.2embed.cc/vnest?tmdb={id}`, whose `vnest.js` rewrites its player
+  iframe to `https://cineby.hair/movie/{id}?autostart=true` (a browser-only
+  Next.js → VidNest player). The app still targeted the dead `swish` structure,
+  so extraction found nothing and the visible WebView loaded the dead shell →
+  spin forever.
+- **Fix (extraction + WebView, both iOS and Android):** `fetchTwoEmbedPlayerUrl`
+  now resolves BOTH structures — legacy `swish` → `2vcdn.skin/e/{sid}` first
+  (native-playable, unchanged), then the NEW `vnest?tmdb={id}` →
+  `streamsrcs.2embed.cc/vnest?tmdb={id}` so the visible WebView loads the
+  current player page directly instead of the dead shell. New pure parsers
+  `resolveTwoEmbedVnestTmdb` / `buildTwoEmbedVnestUrl` (+ unit tests).
+- **Anti-frame guard updated for the new chain:** the vnest page guards with
+  `location.replace("https://www.2embed.cc/")` (was `/`). `neutralizeAntiFrameScript`
+  and `isTwoEmbedKillerNavigation` now no-op/cancel that redirect too, so the
+  player's JS runs uninterrupted in WKWebView (the 2026-08 iOS pause fix).
+- `TwoEmbedSkinExtractor` only runs the 2vcdn native fast path when the
+  resolved URL actually is a `2vcdn.skin` player (no wasted 8s timeout on the
+  browser-only vnest page).
+- 224/224 tests pass; analyze clean.
+
 ### `2026-08-05` — v1.3.21: overlays out of the middle + slower subtitle fetch
 
 - **"Controls in the middle" fixed (both platforms).** The failover card
