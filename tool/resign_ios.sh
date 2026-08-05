@@ -142,7 +142,9 @@ run_attempt() {
   # Run Sideloader DIRECTLY in the tmux pane — NOT piped through `tee` (see
   # note 1). remain-on-exit keeps the pane alive after Sideloader exits so the
   # final "100/100 | InstallComplete" line is still readable.
-  tmux new-session -d -s "$SESSION" "cd '$ROOT' && '$SIDELOADER' install '$STAGED_IPA' -i"
+  # `--singlethread` avoids the known multi-threaded signing segfault (status
+  # 139 at ~77/100, seen 2026-08) at the cost of a slower signature pass.
+  tmux new-session -d -s "$SESSION" "cd '$ROOT' && '$SIDELOADER' install '$STAGED_IPA' -i --singlethread"
   tmux set-option -t "$SESSION" remain-on-exit on 2>/dev/null || true
 
   # --- Apple ID + password ---
