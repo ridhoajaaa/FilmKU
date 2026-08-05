@@ -389,6 +389,30 @@ flutter doctor   # Android toolchain should be green
 
 ## 📝 Changelog
 
+### `2026-08-05` — v1.3.11: 2Embed direct HLS extraction + local PNG-strip relay — THE iOS native fix
+
+- **Root cause, finally solved with byte-level proof.** Every previous fix fought the WebView on iOS
+  (shell redirects, disable-devtool, anti-frame JS-pause) because the stream was assumed to need JS.
+  It never did. The 2vcdn player page (`2vcdn.skin/e/{sid}`) embeds the stream URL as a RELATIVE
+  path inside a Dean-Edwards-packed script:
+  `file: "/stream/{token}/{token2}/{ts}/{fileId}/master.m3u8"` — extractable over PLAIN HTTP.
+- **But the m3u8 alone never played in mpv/ExoPlayer/AVPlayer**: every segment is served as a
+  FAKE PNG (a constant 70-byte PNG header prepended to raw MPEG-TS — the classic
+  "video-in-image" anti-leech). Verified: stripping the 70 bytes → identical bytes play in mpv
+  (h264 1728x720 30fps + AAC).
+- **Fix: a tiny local HLS relay (`HlsRelay`, loopback-only)**. Extraction decodes the packer
+  (radix 36 — NOT the classic 62! — verified: token `d4` = index 472 = `vplayer`), gets the
+  direct master.m3u8, and serves it through the relay which (1) rewrites every playlist URI to
+  itself and (2) strips the PNG wrapper from every segment. mpv/media_kit sees a clean, native,
+  ad-free HLS stream on 127.0.0.1 — **identical on iOS and Android, zero WebView involvement**.
+- **Proven end-to-end on Linux with real mpv** (2026-08-05): extraction → relay → `mpv`
+  decoded h264 + AAC, 5 frames, clean exit. 172/172 tests pass, analyze clean.
+- New unit tests: jsUnescape, radixToBase (36), packer decode, stream-path regex, PNG-strip
+  (70-byte wrapper / non-PNG passthrough), relay playlist rewrite. E2E tool `tool/relay_e2e_standalone.dart`
+  retained for re-verification.
+
+### `2026-08-05` — v1.3.10: neutralise 2vcdn anti-framing guard — JW player requests its m3u8 on iOS
+
 ### `2026-08-05` — v1.3.10: neutralise the 2vcdn anti-framing guard — JW player finally requests its m3u8 on iOS
 
 - **Progress from v1.3.9 (on-device syslog):** the direct-player bypass works —

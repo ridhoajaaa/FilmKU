@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
+import '../../../../core/net/hls_relay.dart';
 import '../../../../core/utils/app_logger.dart';
 import '../widgets/error_view.dart';
 import '../widgets/player_swipe_dismiss.dart';
@@ -444,6 +445,10 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
     _positionSub?.cancel();
     _restorePortrait();
     _player.dispose();
+    // The player streams segments lazily from the local relay (which strips
+    // the fake-PNG wrapper) for the WHOLE playback session — free its port
+    // only when the player itself closes. A fresh session re-binds.
+    HlsRelay.instance.dispose();
     super.dispose();
   }
 

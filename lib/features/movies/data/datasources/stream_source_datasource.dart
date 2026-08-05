@@ -7,6 +7,7 @@ import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
 import '../../../../core/constants/app_constants.dart';
 import '../../../../core/local/settings_service.dart';
+import '../../../../core/net/hls_relay.dart';
 import '../../../../core/webview/capture_webview_settings.dart';
 import '../../domain/entities/video_source.dart';
 
@@ -697,10 +698,12 @@ class TwoEmbedExtractor extends StreamExtractor {
 /// the same backend, so one region-blocked/rotated domain does not kill the
 /// source entirely.
 ///
-/// NOTE: the actual player (`/swish`) is JS-rendered and did not emit any
-/// .m3u8/.mp4 within 30s of autoplay-allowed headless probing — treat this
-/// source as best-effort for NATIVE extraction and rely on its (verified
-/// alive) embed page for the visible WebView fallback.
+/// NATIVE extraction is now the FAST PATH (v1.3.11): the shell resolves to
+/// `2vcdn.skin/e/{sid}`, whose packed player config embeds the direct
+/// `/stream/.../master.m3u8` — decoded over plain HTTP (no WebView) and
+/// served through [HlsRelay] which strips the fake-PNG segment wrapper, so
+/// mpv/media_kit plays it natively on iOS AND Android. The old JS-rendered
+/// `/swish` headless-scrape path remains only as a fallback.
 class TwoEmbedSkinExtractor extends StreamExtractor {
   const TwoEmbedSkinExtractor();
 
@@ -728,6 +731,35 @@ class TwoEmbedSkinExtractor extends StreamExtractor {
       'FILMKU_EXTRACT_TRY sourceId=$sourceId label=$label '
       'playerUrl=${playerUrl ?? 'none'} target=$target',
     );
+
+    // FAST PATH (native, no WebView, works identically on iOS + Android):
+    // decode the packed player config over plain HTTP and get the direct
+    // `/stream/.../master.m3u8` URL, then serve it through the local HLS
+    // relay which strips the fake-PNG wrapper from every segment. This is the
+    // 2026-08 on-device evidence fix: the JW player never ran in the iOS
+    // WebView (JS-pause on cancelled navigation), so WebView-based capture
+    // could never see the stream — but the URL itself was always there.
+    if (playerUrl != null) {
+      final direct =
+          await StreamSourceDataSource.fetchTwoVcdnStreamUrl(playerUrl);
+      if (direct != null) {
+        final relayUrl = await HlsRelay.instance.serve(direct);
+        debugPrint(
+          'FILMKU_EXTRACT_TRY sourceId=$sourceId label=$label '
+          'twoVcdnDirect=$direct relay=${relayUrl ?? 'failed'}',
+        );
+        if (relayUrl != null) {
+          return VideoSource(
+            sourceId: sourceId,
+            label: label,
+            videoUrl: relayUrl,
+            embedUrl: shell,
+            quality: 'Auto',
+          );
+        }
+      }
+    }
+
     return _ScrapeHelper.tryExtract(
       sourceId,
       label,
@@ -1028,6 +1060,195 @@ class StreamSourceDataSource {
       final html =
           await _HtmlFetcher.get(embedUrl).timeout(const Duration(seconds: 8));
       return buildTwoEmbedPlayerUrl(html);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// -------------------------------------------------------------------------
+  /// 2vcdn.skin DIRECT stream extraction (no WebView, no JS execution)
+  /// -------------------------------------------------------------------------
+  ///
+  /// The 2vcdn player page (`2vcdn.skin/e/{sid}`) embeds its real stream URL
+  /// as a RELATIVE path inside a Dean-Edwards-packed script:
+  ///
+  ///   file: "/stream/{t1}/{t2}/{ts}/{fileId}/master.m3u8"
+  ///
+  /// (verified 2026-08: the tokens are literal entries of the packer's key
+  /// array, and the URL serves a valid HLS master playlist over plain HTTP).
+  /// No headless WebView / JS execution is needed — decode the packer, regex
+  /// the path, and hand `https://2vcdn.skin{path}` to [HlsRelay] which strips
+  /// the fake-PNG wrapper from each segment so mpv/media_kit plays it
+  /// natively. This is THE iOS/Android native-playback fix for 2Embed.
+
+  /// Un-escapes a JS single-quoted string (`\\` -> `\`, `\'` -> `'`, `\xNN`,
+  /// `\uNNNN`, ...) as emitted by the packer's payload argument.
+  @visibleForTesting
+  static String jsUnescape(String s) {
+    final out = StringBuffer();
+    var i = 0;
+    while (i < s.length) {
+      final ch = s[i];
+      if (ch == '\\' && i + 1 < s.length) {
+        final nxt = s[i + 1];
+        // Fixed-width escapes consume their own length; every other escape
+        // advances by exactly 2. Rewritten as if/else so each branch
+        // explicitly controls `i` (no implicit switch fall-through relied on).
+        if (nxt == 'x' && i + 3 < s.length) {
+          final code = int.tryParse(s.substring(i + 2, i + 4), radix: 16);
+          out.write(String.fromCharCode(code ?? 0x3F));
+          i += 4;
+        } else if (nxt == 'u' && i + 5 < s.length) {
+          final code = int.tryParse(s.substring(i + 2, i + 6), radix: 16);
+          out.write(String.fromCharCode(code ?? 0x3F));
+          i += 6;
+        } else {
+          switch (nxt) {
+            case '\\':
+              out.write('\\');
+            case "'":
+              out.write("'");
+            case '"':
+              out.write('"');
+            case 'n':
+              out.write('\n');
+            case 't':
+              out.write('\t');
+            case 'r':
+              out.write('\r');
+            default:
+              out.write(nxt);
+          }
+          i += 2;
+        }
+      } else {
+        out.write(ch);
+        i++;
+      }
+    }
+    return out.toString();
+  }
+
+  /// Converts a decimal number to a base-[radix] string (digits 0-9, a-z,
+  /// A-Z) — the token encoding the Dean-Edwards packer uses for key indices.
+  ///
+  /// The 2vcdn packer uses radix 36 (NOT the classic 62 — verified 2026-08:
+  /// token `d4` maps to key index 472 = `vplayer` only in base 36). Using the
+  /// wrong radix silently produces wrong tokens, so every call site must pass
+  /// the packer's declared radix.
+  @visibleForTesting
+  static String radixToBase(int num, int radix) {
+    const digits =
+        '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
+    if (num == 0) return '0';
+    final out = StringBuffer();
+    var n = num;
+    while (n > 0) {
+      out.write(digits[n % radix]);
+      n ~/= radix;
+    }
+    return out.toString().split('').reversed.join();
+  }
+
+  /// Decodes a Dean-Edwards-packed script body (the classic
+  /// `eval(function(p,a,c,k,e,d){...}('payload',radix,count,'k0|k1|...'`
+  /// format used by the 2vcdn player) into readable JS. Returns null on any
+  /// parse failure.
+  ///
+  /// Robust parse order (reviewer finding 2026-08): the KEY array is located
+  /// FIRST (quotes can never appear inside it), then radix/count immediately
+  /// before it, then the payload is sliced with `lastIndexOf` up to that
+  /// boundary — never with a non-greedy `.*?` over the whole block, which a
+  /// payload containing `\',<digits>,<digits>,'` (packed string literals) can
+  /// truncate early.
+  @visibleForTesting
+  static String? unpackDeanEdwards(String packedBlock) {
+    // 1. Keys: `...'k0|k1|...'.split('|'))` — quotes cannot appear inside.
+    final keysM = RegExp(r"'([^']*)'\.split\('\|'\)\)", dotAll: true)
+        .firstMatch(packedBlock);
+    if (keysM == null) return null;
+    final keysStr = keysM.group(1)!;
+
+    // 2. radix + count immediately before the keys: `,radix,count,'keys'`.
+    final metaM = RegExp(
+      r",(\d+),(\d+),'" + RegExp.escape(keysStr) + r"'\.split",
+    ).firstMatch(packedBlock);
+    if (metaM == null) return null;
+    final radix = int.tryParse(metaM.group(1)!) ?? 36;
+    final count = int.tryParse(metaM.group(2)!) ?? 0;
+
+    // 3. Payload: everything between `return p}(` and the `',radix,count,'`
+    // boundary (lastIndexOf so an identical-looking fragment inside the
+    // payload never wins).
+    const open = 'return p}(';
+    final openIdx = packedBlock.indexOf(open);
+    // Boundary is `,radix,count,'keys'` — NO quote after the first comma
+    // (a stray `,'$radix...` would never match the real `,36,490,'keys`
+    // format and silently return null).
+    final boundary = ",$radix,$count,'$keysStr'";
+    final bodyEnd = packedBlock.lastIndexOf(boundary);
+    if (openIdx < 0 || bodyEnd <= openIdx + open.length) return null;
+    // The payload literal is sliced WITH its wrapping single-quotes (the
+    // boundary is the `',radix,count,'keys'` terminator), so strip them — the
+    // old non-greedy regex captured the payload without them. Escaped quotes
+    // inside (`\'`) are already unescaped by jsUnescape before this strip, so
+    // only the true wrapper is removed.
+    var body =
+        jsUnescape(packedBlock.substring(openIdx + open.length, bodyEnd));
+    if (body.startsWith("'") && body.endsWith("'")) {
+      body = body.substring(1, body.length - 1);
+    }
+
+    var keys = keysStr.split('|');
+    while (keys.length < count) {
+      keys = [...keys, ''];
+    }
+    // Substitute indices from the highest down (the original loop) so earlier
+    // keys never corrupt already-substituted text.
+    for (var c = count - 1; c >= 0; c--) {
+      if (c >= keys.length) continue;
+      final k = keys[c];
+      if (k.isEmpty) continue;
+      final token = radixToBase(c, radix);
+      final pattern =
+          RegExp('(?<![A-Za-z0-9_])${RegExp.escape(token)}(?![A-Za-z0-9_])');
+      body = body.replaceAll(pattern, k);
+    }
+    return body;
+  }
+
+  /// Extracts the `/stream/{tokens}/master.m3u8` path from an unpacked 2vcdn
+  /// player script body, or null when absent.
+  @visibleForTesting
+  static String? extractTwoVcdnStreamPath(String unpackedBody) {
+    final m = RegExp(
+      r'(/stream/[A-Za-z0-9_/-]+/master[.]m3u8)',
+    ).firstMatch(unpackedBody);
+    return m?.group(1);
+  }
+
+  /// Extracts the direct stream URL from a raw 2vcdn player page.
+  ///
+  /// Returns `https://2vcdn.skin{path}` or null when the page has no packer
+  /// or no stream path. Pure HTTP — no WebView, no JS.
+  static String? streamUrlFromTwoVcdnPage(String pageHtml) {
+    final packedStart = pageHtml.indexOf('eval(function(p,a,c,k,e,d)');
+    if (packedStart < 0) return null;
+    final unpacked = unpackDeanEdwards(pageHtml.substring(packedStart));
+    if (unpacked == null) return null;
+    final path = extractTwoVcdnStreamPath(unpacked);
+    if (path == null) return null;
+    return 'https://2vcdn.skin$path';
+  }
+
+  /// Fetches the 2vcdn player page for [playerUrl] (`2vcdn.skin/e/{sid}`) and
+  /// returns its direct `.m3u8` stream URL, or null on any failure. Hard 8s
+  /// cap so a hanging page never starves the extraction budget.
+  static Future<String?> fetchTwoVcdnStreamUrl(String playerUrl) async {
+    try {
+      final html =
+          await _HtmlFetcher.get(playerUrl).timeout(const Duration(seconds: 8));
+      return streamUrlFromTwoVcdnPage(html);
     } catch (_) {
       return null;
     }

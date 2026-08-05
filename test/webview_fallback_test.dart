@@ -1,7 +1,10 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:filmku/core/net/hls_relay.dart';
 import 'package:filmku/features/movies/domain/entities/video_source.dart';
 import 'package:filmku/features/movies/presentation/screens/player_screen.dart';
 import 'package:filmku/features/movies/presentation/screens/webview_player_screen.dart';
@@ -904,6 +907,130 @@ void main() {
     });
   });
 
+  group('StreamSourceDataSource 2vcdn direct extraction', () {
+    test('jsUnescape handles backslash escapes', () {
+      expect(StreamSourceDataSource.jsUnescape(r'http:\/\/x'), 'http://x');
+      expect(StreamSourceDataSource.jsUnescape(r"'it\'s"), "'it's");
+      expect(StreamSourceDataSource.jsUnescape(r'\x41\u0042'), 'AB');
+    });
+
+    test('radixToBase encodes key indices with the packer radix', () {
+      // 2vcdn uses radix 36 (not the classic 62): token d4 == index 472
+      // (vplayer) only in base 36.
+      expect(StreamSourceDataSource.radixToBase(0, 36), '0');
+      expect(StreamSourceDataSource.radixToBase(10, 36), 'a');
+      expect(StreamSourceDataSource.radixToBase(35, 36), 'z');
+      expect(StreamSourceDataSource.radixToBase(36, 36), '10');
+      expect(StreamSourceDataSource.radixToBase(472, 36), 'd4');
+      expect(StreamSourceDataSource.radixToBase(132, 36), '3o');
+    });
+
+    test('unpackDeanEdwards decodes a minimal packed block', () {
+      // Minimal packer wrapper (the parser keys off `return p}(` — the real
+      // packer function body is irrelevant to decoding): keys [stream,
+      // master] at indices 0/1, body refers to them as base-62 tokens.
+      const packed = "eval(function(p,a,c,k,e,d){return p}("
+          "'1 0',62,2,'stream|master'.split('|')))";
+      expect(StreamSourceDataSource.unpackDeanEdwards(packed), 'master stream');
+    });
+
+    test('unpackDeanEdwards returns null for a non-packer page', () {
+      expect(StreamSourceDataSource.unpackDeanEdwards('<html>no packer</html>'),
+          isNull);
+    });
+
+    test('unpackDeanEdwards resists embedded \',digits,digits,\' fragments',
+        () {
+      // The payload embeds a packed string literal `\',62,2,'` — the exact
+      // pattern that truncated the old non-greedy `.*?'` regex (group(1) cut
+      // at the ESCAPED quote inside the payload). The robust lastIndexOf
+      // slice + wrapping-quote strip must decode the WHOLE payload, and the
+      // `,62,2,'keys'` boundary must still be found at the real terminator.
+      const packed = "eval(function(p,a,c,k,e,d){return p}("
+          "'var x=\\',62,2,';file:\"/stream/1/master.m3u8\";',62,2,"
+          "'stream|master'.split('|')))";
+      final body = StreamSourceDataSource.unpackDeanEdwards(packed);
+      expect(body, isNotNull);
+      // The embedded `',62,2,'` string literal survived unescaped AND the
+      // token substitution still ran (index 1 -> master).
+      expect(body, contains("var x=',62,2,';"));
+      expect(body, contains('/stream/master/master.m3u8'));
+    });
+
+    test('extractTwoVcdnStreamPath finds the /stream/.../master.m3u8 path', () {
+      const body = 'var n={"15":"x"};jwplayer("vplayer").setup({';
+      const withUrl = '$body sources:[{file:"/stream/QPdJLigcsVdATv6VtHUHfw/'
+          'kjhhiuahiuhgihdf/1785939409/73649149/master.m3u8"}]});';
+      expect(
+        StreamSourceDataSource.extractTwoVcdnStreamPath(withUrl),
+        '/stream/QPdJLigcsVdATv6VtHUHfw/kjhhiuahiuhgihdf/'
+        '1785939409/73649149/master.m3u8',
+      );
+    });
+
+    test('extractTwoVcdnStreamPath handles the dash-joined rotating token', () {
+      const body = 'file:"/stream/04qp0Us4Ni-62t2OfjrzBw/kjhhiuahiuhgihdf/'
+          '1785939685/73649149/master.m3u8"';
+      expect(
+        StreamSourceDataSource.extractTwoVcdnStreamPath(body),
+        '/stream/04qp0Us4Ni-62t2OfjrzBw/kjhhiuahiuhgihdf/'
+        '1785939685/73649149/master.m3u8',
+      );
+    });
+
+    test('extractTwoVcdnStreamPath returns null when absent', () {
+      expect(StreamSourceDataSource.extractTwoVcdnStreamPath('no stream here'),
+          isNull);
+    });
+
+    test('streamUrlFromTwoVcdnPage needs the eval packer', () {
+      expect(StreamSourceDataSource.streamUrlFromTwoVcdnPage('<html>'), isNull);
+    });
+
+    test('streamUrlFromTwoVcdnPage resolves relative stream path to absolute',
+        () {
+      // Packed body that unpacks to a setup call containing the stream path.
+      final packed = _buildPacked(
+        '/stream/QPdJLigcsVdATv6VtHUHfw/kjhhiuahiuhgihdf/'
+        '1785939409/73649149/master.m3u8',
+      );
+      final page = '<html><script>$packed</script></html>';
+      expect(
+        StreamSourceDataSource.streamUrlFromTwoVcdnPage(page),
+        'https://2vcdn.skin/stream/QPdJLigcsVdATv6VtHUHfw/kjhhiuahiuhgihdf/'
+        '1785939409/73649149/master.m3u8',
+      );
+    });
+  });
+
+  group('HlsRelay stripPngWrapper', () {
+    test('strips the constant 70-byte fake-PNG wrapper', () {
+      final ts = Uint8List.fromList(
+        List<int>.generate(
+            188 * 3, (i) => i == 0 || i == 188 || i == 376 ? 0x47 : (i % 251)),
+      );
+      final wrapped = Uint8List.fromList([
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, // PNG signature
+        ...List<int>.filled(62, 0x00), // rest of the 70-byte wrapper
+        ...ts,
+      ]);
+      final stripped = HlsRelay.stripPngWrapper(wrapped);
+      expect(stripped.length, ts.length);
+      expect(stripped[0], 0x47);
+      expect(stripped[188], 0x47);
+    });
+
+    test('passes through non-PNG data untouched', () {
+      final raw = Uint8List.fromList(List<int>.generate(300, (i) => i % 256));
+      expect(HlsRelay.stripPngWrapper(raw), same(raw));
+    });
+
+    test('passes through short buffers untouched', () {
+      final tiny = Uint8List.fromList([1, 2, 3]);
+      expect(HlsRelay.stripPngWrapper(tiny), same(tiny));
+    });
+  });
+
   group('embedNeutralizeAntiFrameScript', () {
     test('aliases the data-layer canonical script', () {
       expect(
@@ -922,6 +1049,17 @@ void main() {
       expect(s, isNot(contains('location.href')));
     });
   });
+}
+
+/// Builds a Dean-Edwards-packed block whose payload unpacks to a string that
+/// contains [streamPath] (as the 2vcdn player's `file:` value would). The
+/// path is passed through the key array as a single literal so the unpacker
+/// round-trips it verbatim.
+String _buildPacked(String streamPath) {
+  // body '1 0' unpacks to `{streamPath} file` — the stream path appears in
+  // the decoded output, which is all streamUrlFromTwoVcdnPage needs.
+  return "eval(function(p,a,c,k,e,d){return p}("
+      "'1 0',62,2,'file|$streamPath'.split('|')))";
 }
 
 void _noop() {}
