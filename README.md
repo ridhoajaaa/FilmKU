@@ -419,8 +419,6 @@ flutter doctor   # Android toolchain should be green
 
 ## 📝 Changelog
 
-## 📝 Changelog
-
 ### `2026-08-05` — v1.3.20: second subtitle source (SubtitleCat) — film jadul akhirnya dapat subtitle Indonesia
 
 - **Why:** YIFY has nothing (or no Indonesian) for many older/niche movies — the
