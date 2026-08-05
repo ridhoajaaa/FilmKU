@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
+import '../../../../core/local/settings_service.dart';
+
 /// Formats a [Duration] as `h:mm:ss` (hours present only when >= 1 hour) or
 /// `m:ss`. Exposed for tests.
 String formatDuration(Duration d) {
@@ -75,6 +77,12 @@ class _MpvControlsOverlayState extends State<MpvControlsOverlay> {
   bool _muted = false;
   double _lastVolume = 100;
 
+  /// True while a restored mute (setVolume(0) fired before the volume stream
+  /// settled) is still being applied. Stale pre-restore volume events — e.g.
+  /// the initial 100 emitted on subscribe — must not flip the icon back to
+  /// unmuted while the real mute event is in flight.
+  bool _restoringMute = false;
+
   bool _dragging = false;
   double _dragValue = 0;
 
@@ -93,8 +101,30 @@ class _MpvControlsOverlayState extends State<MpvControlsOverlay> {
   @override
   void initState() {
     super.initState();
+    _restorePreferences();
     _subscribe();
     _armHideTimer();
+  }
+
+  /// Applies the persisted player preferences (playback speed, subtitle size,
+  /// mute) to a freshly-created player session — so the user's choices from
+  /// the last session are remembered on every new movie.
+  void _restorePreferences() {
+    final settings = SettingsService.instance;
+    final savedRate = settings.playbackSpeed;
+    _rate = savedRate;
+    _player.setRate(savedRate);
+    _subtitleSize.value = settings.subtitleSize
+        .clamp(
+          MpvControlsOverlay.minSubtitleSize,
+          MpvControlsOverlay.maxSubtitleSize,
+        )
+        .toDouble();
+    if (settings.muted) {
+      _muted = true;
+      _restoringMute = true;
+      _player.setVolume(0);
+    }
   }
 
   void _subscribe() {
@@ -125,7 +155,12 @@ class _MpvControlsOverlayState extends State<MpvControlsOverlay> {
       if (!mounted) return;
       setState(() {
         _volume = v;
-        _muted = v <= 0;
+        // While a restored mute is pending, ignore stale non-zero volume
+        // events (the initial 100) — only the real mute (0) settles it.
+        if (!_restoringMute || v <= 0) {
+          _muted = v <= 0;
+        }
+        if (v <= 0) _restoringMute = false;
       });
     }));
     _subs.add(s.rate.listen((v) {
@@ -176,11 +211,15 @@ class _MpvControlsOverlayState extends State<MpvControlsOverlay> {
   }
 
   void _toggleMute() {
-    if (_muted) {
-      _player.setVolume(_lastVolume.clamp(20.0, 100.0));
-    } else {
+    final nowMuted = !_muted;
+    // Persist so the next session starts muted/unmuted as left.
+    SettingsService.instance.setMuted(nowMuted);
+    setState(() => _muted = nowMuted);
+    if (nowMuted) {
       _lastVolume = _volume <= 0 ? 100 : _volume;
       _player.setVolume(0);
+    } else {
+      _player.setVolume(_lastVolume.clamp(20.0, 100.0));
     }
     _armHideTimer();
   }
@@ -235,6 +274,9 @@ class _MpvControlsOverlayState extends State<MpvControlsOverlay> {
         subtitleTracks: _subtitleTracks,
       ),
     );
+    // Persist the subtitle size chosen in the sheet (the slider updates the
+    // live ValueNotifier; the source of truth is saved once the sheet closes).
+    SettingsService.instance.setSubtitleSize(_subtitleSize.value);
     // Re-arm auto-hide after the sheet closes (it was cancelled while open).
     if (mounted) _armHideTimer();
   }
@@ -554,6 +596,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                     selected: (widget.rate - speed).abs() < 0.001,
                     onSelected: (_) {
                       widget.player.setRate(speed);
+                      SettingsService.instance.setPlaybackSpeed(speed);
                       Navigator.of(context).pop();
                     },
                     selectedColor: Colors.white,

@@ -388,6 +388,20 @@ flutter doctor   # Android toolchain should be green
 ---
 
 ## 📝 Changelog
+### `2026-08-05` — v1.3.14: player preferences remembered across sessions
+
+- **Playback speed, subtitle size and mute now persist** in the Hive-backed
+  `SettingsService`. Every new movie starts with the user's last choices:
+  the player applies the saved speed (mpv `setRate`), the saved subtitle
+  font size (clamped to the 20–52px range) and the saved mute state on
+  session start.
+- Changes are saved as you make them: speed chip selection, mute toggle and
+  subtitle-size slider (saved when the settings sheet closes).
+- Guard added so a stale initial volume event can't flip the mute icon back
+  to unmuted while a restored mute is being applied.
+- New `test/player_prefs_persistence_test.dart` (defaults + round-trips).
+  185/185 tests pass, analyze clean.
+
 ### `2026-08-05` — v1.3.13: iOS player features = Android (custom controls + pop-up-film mini player)
 
 - **iOS player finally matches Android's feature set.** The built-in

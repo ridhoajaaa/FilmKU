@@ -11,6 +11,12 @@ class SettingsService {
   static const String keyHeadless = 'headless_extraction';
   static const String keyFallbackWebview = 'fallback_webview';
 
+  // Player preferences (2026-08): remembered across sessions so the mpv
+  // player starts with the user's playback speed / subtitle size / mute.
+  static const String keyPlaybackSpeed = 'player_playback_speed';
+  static const String keySubtitleSize = 'player_subtitle_size';
+  static const String keyMuted = 'player_muted';
+
   static SettingsService? _instance;
 
   static SettingsService get instance {
@@ -36,6 +42,22 @@ class SettingsService {
   bool get fallbackWebview => (_box.get(keyFallbackWebview) as bool?) ?? false;
   Future<void> setFallbackWebview(bool value) =>
       _box.put(keyFallbackWebview, value);
+
+  /// Last playback speed used by the mpv player (default 1.0x).
+  double get playbackSpeed =>
+      (_box.get(keyPlaybackSpeed) as num?)?.toDouble() ?? 1.0;
+  Future<void> setPlaybackSpeed(double value) =>
+      _box.put(keyPlaybackSpeed, value);
+
+  /// Last subtitle font size used by the mpv player (default 32px).
+  double get subtitleSize =>
+      (_box.get(keySubtitleSize) as num?)?.toDouble() ?? 32.0;
+  Future<void> setSubtitleSize(double value) =>
+      _box.put(keySubtitleSize, value);
+
+  /// Whether the mpv player was muted when it was last closed.
+  bool get muted => (_box.get(keyMuted) as bool?) ?? false;
+  Future<void> setMuted(bool value) => _box.put(keyMuted, value);
 
   /// Per-source enable flag; sources are enabled by default.
   bool isSourceEnabled(String sourceId) =>
