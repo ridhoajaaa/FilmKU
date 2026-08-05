@@ -419,6 +419,23 @@ flutter doctor   # Android toolchain should be green
 
 ## 📝 Changelog
 
+### `2026-08-05` — v1.3.21: overlays out of the middle + slower subtitle fetch
+
+- **"Controls in the middle" fixed (both platforms).** The failover card
+  ("Stream tidak dapat dimulai…"), the failure card ("Native playback
+  failed…") and the subtitle toast were all rendered CENTERED — a pill sat
+  over the middle of the movie while it played (the exact complaint from
+  the screenshot: spinner + 2 lines at center-top). All three now pin to
+  the UPPER area, below the top bar, so the video stays fully visible.
+- **External-subtitle fetch is now mobile-friendly.** The YIFY chain
+  resolves in ~1.4s on a wired connection but was timing out on mobile
+  networks (symptom: laptop probe succeeds, phone shows no subs) — timeout
+  raised 20s → 40s, still fully background/best-effort (never blocks
+  playback), and every step now logs `FILMKU_SUBS_*` for on-device
+  diagnosis.
+- Removed the temporary live-network probe test (diagnostic only, would
+  have flaked CI).
+
 ### `2026-08-05` — v1.3.20: second subtitle source (SubtitleCat) — film jadul akhirnya dapat subtitle Indonesia
 
 - **Why:** YIFY has nothing (or no Indonesian) for many older/niche movies — the

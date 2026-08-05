@@ -363,9 +363,14 @@ class _MpvControlsOverlayState extends State<MpvControlsOverlay> {
             child: _buildBottomBar(),
           ),
         ),
-        // Brief centered toast (subtitle feedback etc.).
+        // Brief toast (subtitle feedback etc.). Positioned in the UPPER area
+        // (below the top bar), NEVER centered — a centered pill over the
+        // middle of the video is exactly the "controls in the middle"
+        // complaint (2026-08: the subtitle-unavailable toast read as a broken
+        // overlay sitting on top of the movie).
         if (_toast != null)
-          Center(
+          Align(
+            alignment: const Alignment(0, -0.72),
             child: Material(
               color: const Color(0xE616181D),
               borderRadius: BorderRadius.circular(10),

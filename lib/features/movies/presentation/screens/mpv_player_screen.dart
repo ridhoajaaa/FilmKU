@@ -279,10 +279,21 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
     // The stream already carries subtitle tracks — native wins.
     if (_player.state.tracks.subtitle.isNotEmpty) return;
     try {
+      // Live-verified 2026-08: the YIFY chain (4 sequential HTTP calls incl.
+      // the Cloudflare-protected .zip) resolves in ~1.4s from a wired
+      // connection but can be much slower on mobile networks — 20s was too
+      // tight and killed the fetch before it finished (the symptom: "no
+      // subtitles" while the laptop probe succeeds). 40s keeps it best-
+      // effort (background, never blocks playback) but survives mobile.
+      appLog('FILMKU_SUBS_START', 'tmdbId=$tmdbId');
       final sub = await SubtitleDatasource()
           .fetchSubtitle(tmdbId)
-          .timeout(const Duration(seconds: 20));
-      if (!mounted || _failed || sub == null) return;
+          .timeout(const Duration(seconds: 40));
+      if (!mounted || _failed || sub == null) {
+        appLog('FILMKU_SUBS_NULL',
+            'tmdbId=$tmdbId mounted=$mounted failed=$_failed');
+        return;
+      }
       // Re-check after the fetch: native tracks may have appeared in the
       // meantime (or the user closed / playback failed over).
       if (_player.state.tracks.subtitle.isNotEmpty) return;
@@ -634,14 +645,14 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
                 const ColoredBox(color: Colors.black),
               if (_failed && _autoFailover)
                 // Stream never started — auto-switching to the backup player.
-                // COMPACT centered card (v1.3.17), NOT a full-screen blocker:
-                // the full-screen version covered the top bar (X unpressable)
-                // and sat over a still-loading player. The top bar and the
-                // player stay visible + pressable around the card; the real
-                // CDN error (e.g. "HTTP 428") is shown underneath so the
-                // user sees WHY before the screen auto-pops into the WebView
-                // fallback.
-                Center(
+                // COMPACT card pinned to the UPPER area (below the top bar), NOT
+                // centered: a centered card sat over the middle of the still-
+                // loading video — the exact "controls in the middle" complaint
+                // (2026-08). The video stays fully visible; the real CDN error
+                // (e.g. "HTTP 428") is shown underneath so the user sees WHY
+                // before the screen auto-pops into the WebView fallback.
+                Align(
+                  alignment: const Alignment(0, -0.7),
                   child: Material(
                     color: const Color(0xE616181D),
                     borderRadius: BorderRadius.circular(14),
@@ -684,12 +695,14 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
                   ),
                 ),
               if (_failed && !_autoFailover)
-                // Compact card, NOT the full-screen ErrorView: the full-screen
-                // version covered the always-visible top bar (X unpressable).
-                // The video keeps playing behind and the X / PiP stay usable;
-                // Retry / Back-to-WebView remain pressable (they're in the
-                // card, on top).
-                Center(
+                // Compact card pinned to the UPPER area (below the top bar), NOT
+                // centered — a centered card over the middle of the video is
+                // the "controls in the middle" complaint (2026-08). The video
+                // keeps playing behind and the X / PiP stay usable; Retry /
+                // Back-to-WebView remain pressable (they're in the card, on
+                // top).
+                Align(
+                  alignment: const Alignment(0, -0.7),
                   child: Material(
                     color: const Color(0xF016181D),
                     borderRadius: BorderRadius.circular(14),
