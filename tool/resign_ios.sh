@@ -59,8 +59,10 @@ LOG="/tmp/resign_ios.log"
 MAX_ATTEMPTS="${FILMKU_RESIGN_MAX_ATTEMPTS:-3}"
 BACKOFF_BASE="${FILMKU_RESIGN_BACKOFF:-20}"   # seconds, doubled per retry
 
-# Safety net: never leave a stale tmux session behind, even on early die().
-trap 'tmux kill-session -t "$SESSION" 2>/dev/null || true' EXIT
+# Safety net: never leave a stale tmux session or staging dir behind, even on
+# early die().
+STAGE_DIR=""
+trap 'rm -rf "$STAGE_DIR"; tmux kill-session -t "$SESSION" 2>/dev/null || true' EXIT
 
 die() { echo "ERROR: $*" >&2; exit 1; }
 
@@ -75,6 +77,17 @@ TFA_CODE="${4:-}"
 
 [[ -f "$IPA" ]]      || die "IPA not found: $IPA (download the 'filmku-ios-unsigned' GitHub Actions artifact first)"
 [[ -x "$SIDELOADER" ]] || die "Sideloader binary not found at $SIDELOADER — see tool/ios-sideloader/BUILD.md"
+
+# Stage the IPA under a UNIQUE per-run basename before handing it to
+# Sideloader. Sideloader extracts the app to /tmp/<ipa-basename>; if a file
+# or dir with that exact name already exists in /tmp — e.g. the source IPA
+# itself when you download it straight to /tmp — its `file.exists(tempPath)`
+# returns true and `rmdirRecurse()` hits a regular FILE, crashing with
+# `std/file.d: ENOTDIR: <ipa>: Not a directory` (2026-08, root-caused). A
+# random basename guarantees the extraction temp dir is always free.
+STAGE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/filmku-stage.XXXXXX")"
+STAGED_IPA="$STAGE_DIR/filmku-$(date +%s)-$$.ipa"
+cp "$IPA" "$STAGED_IPA"
 command -v tmux >/dev/null 2>&1            || die "tmux is required"
 command -v ideviceinstaller >/dev/null 2>&1 || die "ideviceinstaller is required (libimobiledevice)"
 
@@ -129,7 +142,7 @@ run_attempt() {
   # Run Sideloader DIRECTLY in the tmux pane — NOT piped through `tee` (see
   # note 1). remain-on-exit keeps the pane alive after Sideloader exits so the
   # final "100/100 | InstallComplete" line is still readable.
-  tmux new-session -d -s "$SESSION" "cd '$ROOT' && '$SIDELOADER' install '$IPA' -i"
+  tmux new-session -d -s "$SESSION" "cd '$ROOT' && '$SIDELOADER' install '$STAGED_IPA' -i"
   tmux set-option -t "$SESSION" remain-on-exit on 2>/dev/null || true
 
   # --- Apple ID + password ---
