@@ -78,8 +78,17 @@ class MiniPlayerService extends ChangeNotifier {
     }
     // Android performance (2026-08): the default demuxer cache is 32MB; a
     // larger cache smooths slow CDNs. Hardware acceleration stays on.
+    // libass=true enables EMBEDDED subtitle rendering (mpv `sub-visibility`
+    // is 'no' by default in media_kit — the 2026-08 "movies have no
+    // subtitles anymore" regression). Android needs the bundled Roboto font
+    // for libass; iOS renders via its own font stack.
     final player = Player(
-      configuration: const PlayerConfiguration(bufferSize: 64 * 1024 * 1024),
+      configuration: const PlayerConfiguration(
+        bufferSize: 64 * 1024 * 1024,
+        libass: true,
+        libassAndroidFont: 'assets/fonts/Roboto-Regular.ttf',
+        libassAndroidFontName: 'Roboto',
+      ),
     );
     final videoController = VideoController(
       player,

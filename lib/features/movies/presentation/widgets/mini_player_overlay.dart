@@ -1,10 +1,10 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:go_router/go_router.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
 import '../../../../core/media/mini_player_service.dart';
+import '../../../../core/router/app_router.dart';
 import '../screens/mpv_player_screen.dart';
 
 /// Floating "pop up film" mini player.
@@ -79,95 +79,115 @@ class _MiniPlayerOverlayState extends State<MiniPlayerOverlay> {
     }
   }
 
-  /// Bottom-right anchor (above the tab bar) — recomputed EVERY build from
-  /// the current screen size, so rotation re-anchors correctly.
-  Offset _anchor(Size size) {
-    return Offset(size.width - _width - 12, size.height - _height - 120);
-  }
-
   void _expand() {
     final session = _session;
     if (session == null) return;
     MiniPlayerService.instance.expand();
-    context.push(
-      '/mpv-player',
-      extra: MpvPlayerArgs(
-        url: session.url,
-        title: session.title,
-        sourceLabel: session.sourceLabel,
-        httpHeaders: session.httpHeaders,
-      ),
-    );
+    try {
+      // The overlay lives ABOVE the Navigator (app builder), so a route push
+      // must go through the global GoRouter — context.push would look the
+      // router up from a context outside the navigator subtree and could
+      // leave the session playing invisibly on failure (2026-08 on-device:
+      // tapping the mini player hid it but the audio kept running until a
+      // force-quit).
+      appRouter.push(
+        '/mpv-player',
+        extra: MpvPlayerArgs(
+          url: session.url,
+          title: session.title,
+          sourceLabel: session.sourceLabel,
+          httpHeaders: session.httpHeaders,
+        ),
+      );
+    } catch (_) {
+      // Never leak a headless-playing session: stop it if navigation fails.
+      MiniPlayerService.instance.stop();
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final session = _session;
     if (session == null || !_shown) return const SizedBox.shrink();
-    final size = MediaQuery.of(context).size;
-    final anchor = _anchor(size);
-    final dx = (anchor.dx + _dragOffset.dx).clamp(0.0, size.width - _width);
-    final dy = (anchor.dy + _dragOffset.dy).clamp(0.0, size.height - _height);
-    return Positioned(
-      left: dx,
-      top: dy,
-      child: GestureDetector(
-        onPanUpdate: (details) {
-          setState(() {
-            final nextDx = (anchor.dx + _dragOffset.dx + details.delta.dx)
-                .clamp(0.0, size.width - _width);
-            final nextDy = (anchor.dy + _dragOffset.dy + details.delta.dy)
-                .clamp(0.0, size.height - _height);
-            _dragOffset = Offset(nextDx - anchor.dx, nextDy - anchor.dy);
-          });
-        },
-        onTap: _expand,
-        child: Material(
-          color: Colors.black,
-          elevation: 10,
-          shadowColor: Colors.black87,
-          borderRadius: BorderRadius.circular(12),
-          clipBehavior: Clip.antiAlias,
-          child: SizedBox(
-            width: _width,
-            height: _height,
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                Video(
-                  controller: session.videoController,
-                  controls: NoVideoControls,
-                  wakelock: false,
-                ),
-                // Subtle scrim so the floating controls read on bright frames.
-                const DecoratedBox(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [Color(0x33000000), Color(0x66000000)],
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // Bottom-right anchor (above the tab bar), computed from the STACK's
+        // own constraints every build — the mini player is guaranteed to sit
+        // at the bottom-right in any orientation and follows rotation,
+        // instead of freezing at a position computed from a stale size
+        // (2026-08: it appeared mid-screen because the size was captured
+        // while the fullscreen player was still LANDSCAPE).
+        final baseLeft = constraints.maxWidth - _width - 12;
+        final baseTop = constraints.maxHeight - _height - 120;
+        final maxLeft =
+            (constraints.maxWidth - _width).clamp(0.0, double.infinity);
+        final maxTop =
+            (constraints.maxHeight - _height).clamp(0.0, double.infinity);
+        final left = (baseLeft + _dragOffset.dx).clamp(0.0, maxLeft);
+        final top = (baseTop + _dragOffset.dy).clamp(0.0, maxTop);
+        return Positioned(
+          left: left,
+          top: top,
+          child: GestureDetector(
+            onPanUpdate: (details) {
+              setState(() {
+                final nextLeft = (baseLeft + _dragOffset.dx + details.delta.dx)
+                    .clamp(0.0, maxLeft);
+                final nextTop = (baseTop + _dragOffset.dy + details.delta.dy)
+                    .clamp(0.0, maxTop);
+                _dragOffset = Offset(nextLeft - baseLeft, nextTop - baseTop);
+              });
+            },
+            onTap: _expand,
+            child: Material(
+              color: Colors.black,
+              elevation: 10,
+              shadowColor: Colors.black87,
+              borderRadius: BorderRadius.circular(12),
+              clipBehavior: Clip.antiAlias,
+              child: SizedBox(
+                width: _width,
+                height: _height,
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    Video(
+                      controller: session.videoController,
+                      controls: NoVideoControls,
+                      wakelock: false,
                     ),
-                  ),
+                    // Subtle scrim so the floating controls read on bright frames.
+                    const DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [Color(0x33000000), Color(0x66000000)],
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      top: 2,
+                      right: 2,
+                      child: _MiniButton(
+                        icon: Icons.close,
+                        tooltip: 'Stop playback',
+                        onPressed: () => MiniPlayerService.instance.stop(),
+                      ),
+                    ),
+                    Positioned(
+                      bottom: 2,
+                      right: 2,
+                      child:
+                          _PlayPauseButton(controller: session.videoController),
+                    ),
+                  ],
                 ),
-                Positioned(
-                  top: 2,
-                  right: 2,
-                  child: _MiniButton(
-                    icon: Icons.close,
-                    tooltip: 'Stop playback',
-                    onPressed: () => MiniPlayerService.instance.stop(),
-                  ),
-                ),
-                Positioned(
-                  bottom: 2,
-                  right: 2,
-                  child: _PlayPauseButton(controller: session.videoController),
-                ),
-              ],
+              ),
             ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 }
@@ -192,8 +212,8 @@ class _MiniButton extends StatelessWidget {
         customBorder: const CircleBorder(),
         onTap: onPressed,
         child: Padding(
-          padding: const EdgeInsets.all(3),
-          child: Icon(icon, color: Colors.white, size: 15),
+          padding: const EdgeInsets.all(5),
+          child: Icon(icon, color: Colors.white, size: 22),
         ),
       ),
     );

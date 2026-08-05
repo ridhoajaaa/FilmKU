@@ -388,6 +388,32 @@ flutter doctor   # Android toolchain should be green
 ---
 
 ## 📝 Changelog
+### `2026-08-05` — v1.3.16: subtitles back (libass) + mini-player/expand/X fixes
+
+- **Embedded subtitles finally render again.** media_kit's mpv defaults
+  `sub-visibility` to NO, so every movie lost its in-stream subtitles in the
+  mpv rewrite. The player now enables libass subtitle rendering (bundled
+  Roboto font asset for Android), so movies with embedded subtitle tracks
+  show them by default and the subtitle toggle actually toggles them.
+- **Mini player always lands bottom-right.** The floating window's position
+  is now computed from the Stack's own constraints (LayoutBuilder) every
+  build, so it re-anchors on rotation instead of freezing at a position
+  captured while the fullscreen player was still landscape (the mid-screen
+  bug).
+- **Tapping the mini player no longer leaves ghost audio.** The expand used
+  `context.push` from the app-builder context (outside the navigator), which
+  could fail silently — the window hid, the audio kept playing, and only a
+  force-quit ended it. It now pushes through the global router with a
+  stop() safety net on failure.
+- **Close X always pressable.** The top bar (PiP, title, source, X) no
+  longer auto-hides with the bottom controls — it stays visible like the
+  v1.3.12 player, so closing never requires revealing hidden controls.
+- **Subtitle feedback is a centered toast** (visible over the immersive
+  fullscreen player) instead of a bottom SnackBar; streams without a
+  subtitle track say so honestly.
+- Mini-player close/play buttons enlarged (~32px touch targets).
+  185/185 tests pass, analyze clean.
+
 ### `2026-08-05` — v1.3.15: mini-player position + honest subtitle/settings feedback
 
 - **Mini player anchors bottom-right again.** It appeared mid-screen because

@@ -86,6 +86,11 @@ class _MpvControlsOverlayState extends State<MpvControlsOverlay> {
   bool _dragging = false;
   double _dragValue = 0;
 
+  /// Brief centered toast (subtitle feedback etc.) — visible over the
+  /// immersive fullscreen player, unlike a bottom SnackBar.
+  String? _toast;
+  Timer? _toastTimer;
+
   // Subtitle state: a ValueNotifier so the modal settings sheet can update it
   // live while the (underlying) SubtitleViewConfiguration rebuilds.
   final ValueNotifier<bool> _subtitleVisible = ValueNotifier<bool>(true);
@@ -180,12 +185,21 @@ class _MpvControlsOverlayState extends State<MpvControlsOverlay> {
   @override
   void dispose() {
     _hideTimer?.cancel();
+    _toastTimer?.cancel();
     for (final sub in _subs) {
       sub.cancel();
     }
     _subtitleVisible.dispose();
     _subtitleSize.dispose();
     super.dispose();
+  }
+
+  void _showToast(String message) {
+    _toastTimer?.cancel();
+    setState(() => _toast = message);
+    _toastTimer = Timer(const Duration(seconds: 2), () {
+      if (mounted) setState(() => _toast = null);
+    });
   }
 
   void _armHideTimer() {
@@ -227,22 +241,12 @@ class _MpvControlsOverlayState extends State<MpvControlsOverlay> {
   void _toggleSubtitles() {
     if (_subtitleTracks.isEmpty) {
       _armHideTimer();
-      // 2026-08: most streams here carry NO subtitle track — tapping the
-      // subtitle button used to do nothing visible, which read as "broken".
-      // Tell the user honestly instead of silently toggling nothing.
-      // stream.tracks emits a beat AFTER playback starts, so only declare
-      // "no subtitles" once the stream has actually loaded (duration > 0).
-      if (_duration <= Duration.zero) return;
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          const SnackBar(
-            content: Text('Subtitel tidak tersedia untuk stream ini.'),
-            duration: Duration(seconds: 2),
-            behavior: SnackBarBehavior.floating,
-            backgroundColor: Color(0xE616181D),
-          ),
-        );
+      // 2026-08: streams without a subtitle track used to toggle nothing
+      // visible (read as "broken"). Tell the user honestly. A transient
+      // "tidak tersedia" during the first second of track enumeration is
+      // a smaller sin than silence (a duration-based gate could swallow the
+      // toast forever when mpv never reports a duration).
+      _showToast('Subtitel tidak tersedia untuk stream ini.');
       return;
     }
     _subtitleVisible.value = !_subtitleVisible.value;
@@ -339,15 +343,11 @@ class _MpvControlsOverlayState extends State<MpvControlsOverlay> {
           const Center(
             child: CircularProgressIndicator(color: Colors.white70),
           ),
-        // Top bar: minimize, close, title, source chip.
-        AnimatedOpacity(
-          opacity: _controlsVisible ? 1 : 0,
-          duration: const Duration(milliseconds: 220),
-          child: IgnorePointer(
-            ignoring: !_controlsVisible,
-            child: _buildTopBar(),
-          ),
-        ),
+        // Top bar (PiP, title, source, close X): ALWAYS visible so the
+        // close button is always pressable — only the bottom controls
+        // auto-hide (2026-08: hiding the X with the controls made it read
+        // as broken).
+        _buildTopBar(),
         // Bottom bar: play/pause, seek + time, mute, subtitles, settings.
         AnimatedOpacity(
           opacity: _controlsVisible ? 1 : 0,
@@ -357,6 +357,22 @@ class _MpvControlsOverlayState extends State<MpvControlsOverlay> {
             child: _buildBottomBar(),
           ),
         ),
+        // Brief centered toast (subtitle feedback etc.).
+        if (_toast != null)
+          Center(
+            child: Material(
+              color: const Color(0xE616181D),
+              borderRadius: BorderRadius.circular(10),
+              child: Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                child: Text(
+                  _toast!,
+                  style: const TextStyle(color: Colors.white, fontSize: 13),
+                ),
+              ),
+            ),
+          ),
       ],
     );
   }
