@@ -903,6 +903,25 @@ void main() {
       );
     });
   });
+
+  group('embedNeutralizeAntiFrameScript', () {
+    test('aliases the data-layer canonical script', () {
+      expect(
+        embedNeutralizeAntiFrameScript,
+        StreamSourceDataSource.neutralizeAntiFrameScript,
+      );
+    });
+
+    test('overrides Location.prototype.replace for the root redirect', () {
+      const s = embedNeutralizeAntiFrameScript;
+      expect(s, contains('Location.prototype'));
+      expect(s, contains('replace'));
+      // Must only no-op the anti-frame root redirect — real navigations
+      // (including the actual 2vcdn player URL) must still proceed.
+      expect(s, contains('s==="/"'));
+      expect(s, isNot(contains('location.href')));
+    });
+  });
 }
 
 void _noop() {}

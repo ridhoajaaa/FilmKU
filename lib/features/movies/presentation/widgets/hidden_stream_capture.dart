@@ -244,6 +244,17 @@ class _HiddenStreamCaptureState extends State<HiddenStreamCapture> {
 
   Future<void> _injectAllFramesScript(InAppWebViewController controller) async {
     try {
+      // Runs FIRST (before the source's own document-start scripts): the
+      // 2vcdn player's anti-framing guard (`location.replace("/")` when
+      // top-level) must be neutralised before it can redirect the page and
+      // stall the JW player — see [embedNeutralizeAntiFrameScript].
+      await controller.addUserScript(
+        userScript: UserScript(
+          source: embedNeutralizeAntiFrameScript,
+          injectionTime: UserScriptInjectionTime.AT_DOCUMENT_START,
+          forMainFrameOnly: true,
+        ),
+      );
       await controller.addUserScript(
         userScript: UserScript(
           source: embedAllFramesScript,

@@ -240,8 +240,24 @@ class HeadlessStreamExtractor {
         // without this the headless extractor can never capture media URLs
         // on iOS (zero-stream bug). See capture_webview_settings.dart.
         initialSettings: buildCaptureWebViewSettings(),
-        onWebViewCreated: (controller) {
+        // Awaited so the document-start neutraliser is registered BEFORE the
+        // initial load starts — a fire-and-forget addUserScript could race
+        // the document-start of the 2vcdn page and miss it (reviewer finding
+        // 2026-08), silently reintroducing the JS-pause stall.
+        onWebViewCreated: (controller) async {
           debugPrint('FILMKU_EXTRACT_HEADLESS webViewCreated');
+          try {
+            await controller.addUserScript(
+              userScript: UserScript(
+                source: StreamSourceDataSource.neutralizeAntiFrameScript,
+                injectionTime: UserScriptInjectionTime.AT_DOCUMENT_START,
+                forMainFrameOnly: true,
+              ),
+            );
+            debugPrint('FILMKU_EXTRACT_HEADLESS antiframeArmed');
+          } catch (e) {
+            debugPrint('FILMKU_EXTRACT_HEADLESS antiframeError $e');
+          }
         },
         // The 2vcdn player refuses to run top-level (`location.replace("/")`
         // anti-frame guard) and the 2embed shell redirects to a DEAD
@@ -932,6 +948,32 @@ class StreamSourceDataSource {
     final lower = query.toLowerCase();
     return !(lower.contains('headers=%7b%7d') || lower.contains('headers={}'));
   }
+
+  /// Neutralises the 2vcdn anti-framing guard (`if(window==window.top)
+  /// location.replace("/")`) at the JS level, BEFORE the page's own script
+  /// runs (inject at document-start, top frame only).
+  ///
+  /// On-device evidence (2026-08, iOS): cancelling the `/` navigation in
+  /// `shouldOverrideUrlLoading` makes the page LOAD (LOADSTOP fires) but the
+  /// JW player never requests its `.m3u8` — WKWebView pauses the page's JS
+  /// when a top-level navigation is initiated, so `jwplayer.setup` never
+  /// executes. Overriding `Location.prototype.replace` to no-op the root
+  /// redirect means the guard never initiates a navigation at all: the page
+  /// stays top-level, its JS runs uninterrupted, and the player requests the
+  /// playlist like the framed (proven) case. The `shouldOverrideUrlLoading`
+  /// cancel is kept as a belt-and-suspenders for engines where the override
+  /// fails.
+  static const String neutralizeAntiFrameScript = '(function(){'
+      'if(window!==window.top)return;'
+      'try{var L=Location.prototype;'
+      'if(L&&!window.__filmkuAntiFrame){'
+      'window.__filmkuAntiFrame=true;'
+      'var o=L.replace;'
+      'L.replace=function(u){'
+      'var s=String(u||"");'
+      'if(s==="/"||s==="")return;'
+      'return o.apply(this,arguments);};}'
+      '}catch(e){}}})();';
 
   /// Whether a URL belongs to the `disable-devtool` anti-debug script or its
   /// 404-redirect host (`theajack.github.io`).

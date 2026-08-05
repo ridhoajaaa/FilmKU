@@ -389,6 +389,26 @@ flutter doctor   # Android toolchain should be green
 
 ## 📝 Changelog
 
+### `2026-08-05` — v1.3.10: neutralise the 2vcdn anti-framing guard — JW player finally requests its m3u8 on iOS
+
+- **Progress from v1.3.9 (on-device syslog):** the direct-player bypass works —
+  `2embed.skin` resolves to `2vcdn.skin/e/{sid}`, the page LOADS on iOS
+  (LOADSTOP fires, the `location.replace("/")` redirect is cancelled) — but
+  the JW player never requests its `.m3u8`. Headless proof showed the m3u8 IS
+  served when the page is FRAMED; the difference is that WKWebView **pauses
+  the page's JS when a top-level navigation is initiated** (even one we later
+  cancel), so `jwplayer.setup` never executes.
+- **Fix:** inject a document-start user script (top frame) that overrides
+  `Location.prototype.replace` to no-op the root `/` redirect *before* the
+  page's own anti-framing script runs — the guard never initiates a
+  navigation, so JS runs uninterrupted and the player requests the playlist
+  exactly like the proven framed case. Injected in all three WebView paths
+  (hidden auto-capture, visible WebView, headless extractor), keeping the
+  `shouldOverrideUrlLoading` cancel as belt-and-suspenders.
+- 2 new unit tests; **160/160 tests pass, analyze clean.**
+
+
+
 ### `2026-08-05` — v1.3.9: 2Embed.skin direct-player bypass — iOS finally plays natively
 
 - **Root cause (on-device iOS syslog + headless proof):** the 2embed.skin shell

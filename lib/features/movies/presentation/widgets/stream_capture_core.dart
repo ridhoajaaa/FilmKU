@@ -200,6 +200,27 @@ const String embedAutoPlayNudgeScript = '(function(){'
     'document.addEventListener("play",function(){},true);'
     '})();';
 
+/// Neutralises the 2vcdn anti-framing guard (`if(window==window.top)
+/// location.replace("/")`) at the JS level, BEFORE the page's own script
+/// runs.
+///
+/// On-device evidence (2026-08, iOS): cancelling the `/` navigation in
+/// `shouldOverrideUrlLoading` makes the page LOAD (LOADSTOP fires) but the
+/// JW player never requests its `.m3u8` — WKWebView pauses the page's JS
+/// when a top-level navigation is initiated, so the `jwplayer.setup` script
+/// never executes. Overriding `Location.prototype.replace` to no-op the root
+/// redirect means the guard never initiates a navigation at all: the page
+/// stays top-level, its JS runs uninterrupted, and the player requests the
+/// playlist like the framed (proven) case. The `shouldOverrideUrlLoading`
+/// cancel is kept as a belt-and-suspenders for engines where the override
+/// fails.
+/// Presentation-side alias of the 2vcdn anti-framing neutraliser (canonical
+/// copy lives on the data layer — [StreamSourceDataSource
+/// .neutralizeAntiFrameScript] — because the headless extractor needs it
+/// there). See that doc comment for why it exists.
+const String embedNeutralizeAntiFrameScript =
+    StreamSourceDataSource.neutralizeAntiFrameScript;
+
 /// Reads the relayed video (from any frame) or, as a fallback, a top-frame
 /// `<video>` directly, plus the JS-side ad-strip counter. Returns
 /// `JSON.stringify({url, t, ads})` (url may be `''` when nothing plays).
