@@ -96,8 +96,8 @@ void main() {
         final segResp =
             await client.getUrl(Uri.parse(segUrl)).then((r) => r.close());
         final segChunks = await segResp.toList();
-        final segBytes = Uint8List.fromList(
-            [for (final chunk in segChunks) ...chunk]);
+        final segBytes =
+            Uint8List.fromList([for (final chunk in segChunks) ...chunk]);
         expect(segBytes.length, ts.length);
         expect(segBytes[0], 0x47);
         expect(segBytes[188], 0x47);

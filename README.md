@@ -388,6 +388,30 @@ flutter doctor   # Android toolchain should be green
 ---
 
 ## 📝 Changelog
+### `2026-08-05` — v1.3.13: iOS player features = Android (custom controls + pop-up-film mini player)
+
+- **iOS player finally matches Android's feature set.** The built-in
+  `media_kit` adaptive controls (which rendered minimal on iOS) are replaced
+  by a custom full-featured controls overlay used on EVERY platform: tap to
+  show/hide (auto-hide while playing), play/pause, seek bar + elapsed/total
+  time, mute, subtitle on/off, and a settings sheet — playback speed
+  (0.5x–2x), subtitle size (20–52px, applied live to rendered subtitles),
+  video quality/resolution (when libmpv exposes multiple video tracks) and
+  audio track selection.
+- **"Pop up film" (mini player).** New `MiniPlayerService` owns the native
+  Player/VideoController lifecycle, so the player survives the fullscreen
+  route pop: the PiP button (top bar) or iOS swipe-down minimizes playback
+  into a small draggable floating window visible on EVERY screen (mounted in
+  `app.dart` above the Navigator); tapping it expands straight back to
+  fullscreen — same Player, same position, no re-open. Closing (X / Android
+  back) fully stops playback; the HLS relay now lives with the session so the
+  mini player keeps pulling segments.
+- **Failure-flow preserved.** Startup/silent-freeze watchdogs and the
+  auto-failover-to-WebView path are untouched; minimizing a never-started
+  stream is blocked so the WebView fallback still runs.
+- New `test/mpv_controls_helpers_test.dart` (time formatting + settings
+  presets). 181/181 tests pass, analyze clean.
+
 
 ### `2026-08-05` — v1.3.12: fix silent HlsRelay null-server crash — `relay=failed` on-device
 

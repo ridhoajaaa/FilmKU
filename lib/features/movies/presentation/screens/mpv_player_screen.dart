@@ -6,9 +6,10 @@ import 'package:go_router/go_router.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
-import '../../../../core/net/hls_relay.dart';
+import '../../../../core/media/mini_player_service.dart';
 import '../../../../core/utils/app_logger.dart';
 import '../widgets/error_view.dart';
+import '../widgets/mpv_controls_overlay.dart';
 import '../widgets/player_swipe_dismiss.dart';
 
 /// Arguments for the mpv native player route (WebView handoff streams).
@@ -134,8 +135,11 @@ class MpvPlayerScreen extends StatefulWidget {
 }
 
 class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
-  late final Player _player;
-  late final VideoController _videoController;
+  /// The native player + view controller are owned by [MiniPlayerService]
+  /// (so the mini player keeps the session alive after this route pops).
+  /// Assigned asynchronously in [_initPlayer].
+  late Player _player;
+  VideoController? _videoController;
   bool _failed = false;
 
   /// True when [_failed] came from a stream that NEVER started (startup
@@ -200,25 +204,45 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
   @override
   void initState() {
     super.initState();
-    // Android performance (2026-08): the default demuxer cache is 32MB;
-    // a larger cache smooths slow CDNs (less stutter/"patah"). Hardware
-    // acceleration is on by default (GPU decode) — kept explicit so it's
-    // never silently disabled by a config change.
-    _player = Player(
-      configuration: const PlayerConfiguration(bufferSize: 64 * 1024 * 1024),
-    );
-    _videoController = VideoController(
-      _player,
-      configuration: const VideoControllerConfiguration(
-        enableHardwareAcceleration: true,
-      ),
-    );
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _enterLandscape();
     });
+    _initPlayer();
+  }
+
+  /// Acquires the playback session from [MiniPlayerService] — creating a
+  /// fresh native Player, or REUSING the one still playing in the mini
+  /// player (tap-to-expand resumes seamlessly: same Player, same position,
+  /// no re-open).
+  Future<void> _initPlayer() async {
+    final session = await MiniPlayerService.instance.acquire(
+      url: widget.args.url,
+      title: widget.args.title,
+      sourceLabel: widget.args.sourceLabel,
+      httpHeaders: widget.args.httpHeaders,
+    );
+    if (!mounted) return;
+    _player = session.player;
+    _videoController = session.videoController;
+    setState(() {}); // now the controls overlay can render
     _listenForErrors();
     _listenForPlayback();
-    _open();
+    if (session.fresh) {
+      await _open();
+    } else {
+      // Resumed from the mini player: seed the playback evidence from the
+      // LIVE position. If the stream already advanced past zero it is proven
+      // to run (failure gating must not treat it as a stall); if the user
+      // minimized before the first frame, keep the startup watchdog alive so
+      // a never-starting stream still fails over.
+      final pos = _player.state.position;
+      _sawPlaying = pos > Duration.zero;
+      _lastPosition = pos;
+      _currentPosition = pos;
+      _lastWatchPosition = pos;
+      _startWatchdogs(withStartup: !_sawPlaying);
+      appLog('FILMKU_MPV_RESUMED', '(mini player → fullscreen)');
+    }
   }
 
   Future<void> _open() async {
@@ -246,10 +270,27 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
         await _player.seek(widget.args.startAt);
       }
       appLog('FILMKU_MPV_OPENED', '');
-      // If the stream never starts playing, auto-failover to the backup
-      // player instead of staring at black: a brief notice, then pop with
-      // failed=true so PlayerScreen continues in the visible WebView (which
-      // is proven to play these CDN streams on-device).
+      _startWatchdogs();
+    } catch (e) {
+      appLog('FILMKU_MPV_OPEN_ERROR', '$e');
+      // Open threw (bad/unsupported URL) — the stream can never start, so
+      // auto-failover to the backup player rather than a dead-end error UI.
+      _startupFailed('Failed to open stream.');
+    }
+  }
+
+  /// Starts the startup + silent-freeze watchdogs.
+  ///
+  /// - Startup ([withStartup]): if the stream never starts playing,
+  ///   auto-failover to the backup player instead of staring at black: a
+  ///   brief notice, then pop with failed=true so PlayerScreen continues in
+  ///   the visible WebView (which is proven to play these CDN streams
+  ///   on-device). Skipped for a resumed mini-player session (already
+  ///   playing).
+  /// - Silent freeze: catches a stream that dies silently (no error event,
+  ///   but position stops advancing while still `playing`).
+  void _startWatchdogs({bool withStartup = true}) {
+    if (withStartup) {
       _startupWatchdog?.cancel();
       _startupWatchdog = Timer(_startupTimeout, () {
         if (mounted && !_sawPlaying) {
@@ -257,41 +298,34 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
           _startupFailed('Stream did not start playing.');
         }
       });
-      // Periodic progress watchdog: catches a stream that dies silently
-      // (no error event, but position stops advancing while still `playing`).
-      _silentFreezeWatchdog?.cancel();
-      _silentFreezeWatchdog = Timer.periodic(_silentFreezePeriod, (_) {
-        final frozen = mounted &&
-            !_failed &&
-            MpvPlayerScreen.shouldSurfaceSilentFreeze(
-              playing: _player.state.playing,
-              sawPlaying: _sawPlaying,
-              currentPosition: _currentPosition,
-              lastWatchPosition: _lastWatchPosition,
-            );
-        if (frozen) {
-          // Require TWO consecutive frozen ticks before surfacing: a single
-          // 20s window can be a slow-network rebuffer (mpv `playing` stays
-          // true while it rebuffers), not a dead stream.
-          _silentFreezeConsecutive++;
-          if (_silentFreezeConsecutive >= 2) {
-            appLog(
-              'FILMKU_MPV_SILENT_FREEZE',
-              '(no movement over ${_silentFreezePeriod.inSeconds * 2}s)',
-            );
-            _markFailed('Playback stalled (no progress).');
-          }
-        } else {
-          _silentFreezeConsecutive = 0;
-        }
-        _lastWatchPosition = _currentPosition;
-      });
-    } catch (e) {
-      appLog('FILMKU_MPV_OPEN_ERROR', '$e');
-      // Open threw (bad/unsupported URL) — the stream can never start, so
-      // auto-failover to the backup player rather than a dead-end error UI.
-      _startupFailed('Failed to open stream.');
     }
+    _silentFreezeWatchdog?.cancel();
+    _silentFreezeWatchdog = Timer.periodic(_silentFreezePeriod, (_) {
+      final frozen = mounted &&
+          !_failed &&
+          MpvPlayerScreen.shouldSurfaceSilentFreeze(
+            playing: _player.state.playing,
+            sawPlaying: _sawPlaying,
+            currentPosition: _currentPosition,
+            lastWatchPosition: _lastWatchPosition,
+          );
+      if (frozen) {
+        // Require TWO consecutive frozen ticks before surfacing: a single
+        // 20s window can be a slow-network rebuffer (mpv `playing` stays
+        // true while it rebuffers), not a dead stream.
+        _silentFreezeConsecutive++;
+        if (_silentFreezeConsecutive >= 2) {
+          appLog(
+            'FILMKU_MPV_SILENT_FREEZE',
+            '(no movement over ${_silentFreezePeriod.inSeconds * 2}s)',
+          );
+          _markFailed('Playback stalled (no progress).');
+        }
+      } else {
+        _silentFreezeConsecutive = 0;
+      }
+      _lastWatchPosition = _currentPosition;
+    });
   }
 
   /// Auto-fails a stream that never started (startup timeout / open error).
@@ -444,11 +478,12 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
     _playingSub?.cancel();
     _positionSub?.cancel();
     _restorePortrait();
-    _player.dispose();
-    // The player streams segments lazily from the local relay (which strips
-    // the fake-PNG wrapper) for the WHOLE playback session — free its port
-    // only when the player itself closes. A fresh session re-binds.
-    HlsRelay.instance.dispose();
+    // Player + local HLS relay lifecycle is owned by MiniPlayerService so the
+    // mini player keeps playing after this route pops. Only a pop that was
+    // NOT a minimize stops playback (system back on Android, failed close).
+    if (!MiniPlayerService.instance.isMinimized) {
+      MiniPlayerService.instance.stop();
+    }
     super.dispose();
   }
 
@@ -467,7 +502,28 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
     await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
   }
 
-  void _close({bool failed = false}) => context.pop<bool>(failed);
+  /// Closes the player: stops playback (unless already minimized — then the
+  /// mini player keeps the session) and pops with [failed] for the caller.
+  Future<void> _close({bool failed = false}) async {
+    if (failed || !MiniPlayerService.instance.isMinimized) {
+      await MiniPlayerService.instance.stop();
+    }
+    if (mounted) context.pop<bool>(failed);
+  }
+
+  /// "Pop up film": keeps playback running in the floating mini player.
+  void _minimize() {
+    // Never minimize a stream that NEVER started (auto-failover notice): the
+    // mini player would spin a dead stream forever and the WebView failover
+    // (PlayerScreen's backup path) would never run. Close with failure so the
+    // caller continues in the visible WebView as designed.
+    if (_autoFailover) {
+      _close(failed: true);
+      return;
+    }
+    MiniPlayerService.instance.minimize();
+    context.pop<bool>(false);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -477,59 +533,26 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
         // iOS: swipe down anywhere to leave fullscreen (no need to kill the
         // app from the background). Non-iOS platforms are a pass-through.
         child: PlayerSwipeDismiss(
-          onDismiss: () => _close(),
+          // iOS swipe-down = "pop up film" (minimize, keep playing); full
+          // close is the X button (or the system back on Android).
+          onDismiss: _minimize,
           child: Stack(
             fit: StackFit.expand,
             children: [
-              // libmpv renders + letterboxes; the built-in adaptive controls
-              // provide play/pause, seek bar and volume.
-              Video(controller: _videoController),
-              // Title + source chip + close — always accessible (immersive
-              // mode hides the system affordances).
-              Positioned(
-                top: 8,
-                left: 8,
-                right: 8,
-                child: Row(
-                  children: [
-                    _RoundIconButton(
-                      icon: Icons.close,
-                      tooltip: 'Close player',
-                      onPressed: () => _close(),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                        widget.args.title,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 15,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 5,
-                      ),
-                      decoration: BoxDecoration(
-                        color: Colors.black54,
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                      child: Text(
-                        widget.args.sourceLabel,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 11,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+              // Custom full-featured controls — pause, mute, subtitles and a
+              // settings sheet (speed, subtitle size, resolution, audio) plus
+              // the top bar (minimize, close, title, source chip). Identical
+              // on iOS and Android.
+              if (_videoController != null)
+                MpvControlsOverlay(
+                  controller: _videoController!,
+                  title: widget.args.title,
+                  sourceLabel: widget.args.sourceLabel,
+                  onMinimize: _minimize,
+                  onClose: _close,
+                )
+              else
+                const ColoredBox(color: Colors.black),
               if (_failed && _autoFailover)
                 // Stream never started — auto-switching to the backup player.
                 // Compact notice (NOT the full error UI) so the user isn't
@@ -594,31 +617,6 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
             ],
           ),
         ),
-      ),
-    );
-  }
-}
-
-class _RoundIconButton extends StatelessWidget {
-  const _RoundIconButton({
-    required this.icon,
-    required this.tooltip,
-    required this.onPressed,
-  });
-
-  final IconData icon;
-  final String tooltip;
-  final VoidCallback onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.black54,
-      shape: const CircleBorder(),
-      child: IconButton(
-        onPressed: onPressed,
-        icon: Icon(icon, color: Colors.white, size: 22),
-        tooltip: tooltip,
       ),
     );
   }

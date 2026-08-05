@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import 'core/router/app_router.dart';
 import 'core/theme/app_theme.dart';
+import 'features/movies/presentation/widgets/mini_player_overlay.dart';
 
 class FilmKuApp extends StatelessWidget {
   const FilmKuApp({super.key});
@@ -19,6 +20,17 @@ class FilmKuApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: theme,
       routerConfig: appRouter,
+      // The floating "pop up film" mini player lives ABOVE the whole
+      // Navigator so it stays visible on every screen while minimized.
+      builder: (context, child) => Stack(
+        // expand keeps the Navigator full-size (the classic navigator-in-a-
+        // Stack gotcha: with loose fit the child can collapse).
+        fit: StackFit.expand,
+        children: [
+          if (child != null) child,
+          const MiniPlayerOverlay(),
+        ],
+      ),
     );
   }
 }
