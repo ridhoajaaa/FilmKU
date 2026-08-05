@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:archive/archive.dart';
 import 'package:dio/dio.dart';
@@ -44,6 +45,26 @@ class SubtitleLink {
   final String label;
 }
 
+/// A subtitle entry parsed from a SubtitleCat detail page — a DIRECT `.srt`
+/// link (no zip, no anti-bot), with the language encoded in the filename
+/// suffix (`{name}-id.srt`).
+class SubtitleCatLink {
+  const SubtitleCatLink({
+    required this.path,
+    required this.language,
+    required this.label,
+  });
+
+  /// Absolute `.srt` path, e.g. `/subs/1582/Movie-2021-1080p-id.srt`.
+  final String path;
+
+  /// ISO-ish language code ('id', 'en', 'es-419', …) or 'xx' when unknown.
+  final String language;
+
+  /// Human-readable language label (e.g. 'Indonesian').
+  final String label;
+}
+
 /// ---------------------------------------------------------------------------
 /// External subtitle fetching for the native player.
 ///
@@ -51,15 +72,20 @@ class SubtitleLink {
 /// subtitle tracks at all — verified 2026-08: the 2vcdn master playlist for a
 /// random movie is 144 bytes with zero `#EXT-X-MEDIA` lines — so "built-in"
 /// subtitles never appear no matter what the player does. [SubtitleDatasource]
-/// fetches them EXTERNALLY instead:
+/// fetches them EXTERNALLY instead, chaining two FREE keyless sources:
 ///
-///  1. TMDB id → IMDB id (`/movie/{id}/external_ids`).
-///  2. YIFY subtitles (`yifysubtitles.ch/movie-imdb/{tt}`) — free, NO API key.
-///  3. Prefer the INDONESIAN subtitle, fall back to English.
-///  4. Download the `.zip`, extract the `.srt`, return it as text.
+///  1. **YIFY subtitles** (`yifysubtitles.ch/movie-imdb/{tt}`) — needs the
+///     TMDB→IMDB id. Indonesian preferred, English fallback. The `.zip`
+///     download MUST carry the detail page as `Referer` (Cloudflare 403s it
+///     otherwise — probed 2026-08).
+///  2. **SubtitleCat** (`subtitlecat.com`) — search by TMDB title + year (no
+///     IMDB id needed), then the release detail pages expose DIRECT `.srt`
+///     links with the language in the filename (`-id.srt`, `-en.srt`). Also
+///     Indonesian preferred, English fallback.
 ///
-/// The caller loads it via media_kit's `SubtitleTrack.data(...)`. Best-effort:
-/// ANY failure returns null and must never block or fail playback.
+/// The caller loads the result via media_kit's `SubtitleTrack.data(...)`.
+/// Best-effort: ANY failure returns null and must never block or fail
+/// playback.
 /// ---------------------------------------------------------------------------
 class SubtitleDatasource {
   SubtitleDatasource({ApiClient? tmdb, Dio? dio})
@@ -85,49 +111,117 @@ class SubtitleDatasource {
   }
 
   /// Fetches the best available subtitle for [tmdbId]: Indonesian first,
-  /// English as fallback. Returns null when the movie has no subtitle on
-  /// YIFY, the TMDB id is unknown, or ANY network/parse error occurs.
+  /// English as fallback, across both providers (YIFY then SubtitleCat).
+  /// Returns null when neither source has a usable subtitle for the movie,
+  /// or ANY network/parse error occurs.
   Future<SubtitleInfo?> fetchSubtitle(int tmdbId) async {
     try {
       final imdbId = await _fetchImdbId(tmdbId);
-      if (imdbId == null) return null;
-      final moviePage = await _getText(
-        'https://yifysubtitles.ch/movie-imdb/$imdbId',
-      );
-      final links = parseSubtitleLinks(moviePage);
-      if (links.isEmpty) return null;
-      // Indonesian preferred, English fallback, then whatever exists.
-      var pick = links.firstWhere(
-        (l) => l.language == 'id',
-        orElse: () => links.firstWhere(
-          (l) => l.language == 'en',
-          orElse: () => links.first,
-        ),
-      );
-      final detail = await _getText('https://yifysubtitles.ch${pick.path}');
-      final zipPath = parseZipLink(detail);
-      if (zipPath == null) return null;
-      final bytes = await _getBytes(
-        'https://yifysubtitles.ch$zipPath',
-        // YIFY serves the .zip through Cloudflare which 403s requests WITHOUT
-        // a same-origin Referer (probed 2026-08: UA+Referer → HTTP 200 real
-        // zip; UA alone → 403 "Just a moment…" challenge). The Referer must
-        // be the subtitle DETAIL page — that's what a real browser sends
-        // when clicking the download button. Without this the whole subtitle
-        // flow silently returned null (the 403 body never parsed as a zip).
-        headers: {'Referer': 'https://yifysubtitles.ch${pick.path}'},
-      );
-      final srt = extractSrtFromZip(bytes);
-      if (srt == null || srt.trim().isEmpty) return null;
-      return SubtitleInfo(
-        title: pick.label,
-        language: pick.language,
-        data: srt,
-      );
+      if (imdbId != null) {
+        final yify = await _fetchFromYify(imdbId);
+        if (yify != null) return yify;
+      }
+      // YIFY had nothing (or no IMDB id) — try the keyless title-search
+      // provider. Works even when the TMDB→IMDB lookup failed above.
+      final subcat = await _fetchFromSubtitleCat(tmdbId);
+      if (subcat != null) return subcat;
+      return null;
     } catch (_) {
       // Best-effort — subtitles must never break playback.
       return null;
     }
+  }
+
+  /// YIFY flow: IMDB page → subtitle entries → detail page → `.zip` download
+  /// (with the detail page as Referer) → extract `.srt`.
+  Future<SubtitleInfo?> _fetchFromYify(String imdbId) async {
+    final moviePage = await _getText(
+      'https://yifysubtitles.ch/movie-imdb/$imdbId',
+    );
+    final links = parseSubtitleLinks(moviePage);
+    if (links.isEmpty) return null;
+    // Indonesian preferred, English fallback, then whatever exists.
+    var pick = links.firstWhere(
+      (l) => l.language == 'id',
+      orElse: () => links.firstWhere(
+        (l) => l.language == 'en',
+        orElse: () => links.first,
+      ),
+    );
+    final detail = await _getText('https://yifysubtitles.ch${pick.path}');
+    final zipPath = parseZipLink(detail);
+    if (zipPath == null) return null;
+    final bytes = await _getBytes(
+      'https://yifysubtitles.ch$zipPath',
+      // YIFY serves the .zip through Cloudflare which 403s requests WITHOUT
+      // a same-origin Referer (probed 2026-08: UA+Referer → HTTP 200 real
+      // zip; UA alone → 403 "Just a moment…" challenge). The Referer must
+      // be the subtitle DETAIL page — that's what a real browser sends
+      // when clicking the download button. Without this the whole subtitle
+      // flow silently returned null (the 403 body never parsed as a zip).
+      headers: {'Referer': 'https://yifysubtitles.ch${pick.path}'},
+    );
+    final srt = extractSrtFromZip(bytes);
+    if (srt == null || srt.trim().isEmpty) return null;
+    return SubtitleInfo(
+      title: pick.label,
+      language: pick.language,
+      data: srt,
+    );
+  }
+
+  /// SubtitleCat flow: TMDB title + year → search page → release detail
+  /// pages → direct `.srt` download. Indonesian preferred, English fallback.
+  Future<SubtitleInfo?> _fetchFromSubtitleCat(int tmdbId) async {
+    final titleInfo = await _fetchTitle(tmdbId);
+    if (titleInfo == null) return null;
+    final query = titleInfo.year.isEmpty
+        ? titleInfo.title
+        : '${titleInfo.title} ${titleInfo.year}';
+    final searchHtml = await _getText(
+      'https://subtitlecat.com/index.php'
+      '?search=${Uri.encodeQueryComponent(query)}',
+    );
+    final slugs = parseSubtitleCatSlugs(searchHtml);
+    if (slugs.isEmpty) return null;
+    // Try up to 5 release groups — the first page usually has a subtitle,
+    // but some releases only carry a few languages (a 2026-08 probe of a
+    // popular movie found 55 release pages; Indonesian appeared only on
+    // SOME of them).
+    for (final slug in slugs.take(5)) {
+      try {
+        final detail = await _getText('https://subtitlecat.com/$slug');
+        final links = parseSubtitleCatSrtLinks(detail);
+        if (links.isEmpty) continue;
+        final pick = links.firstWhere(
+          (l) => l.language == 'id',
+          orElse: () => links.firstWhere(
+            (l) => l.language == 'en',
+            orElse: () => links.first,
+          ),
+        );
+        final srt = await _getText('https://subtitlecat.com${pick.path}');
+        if (srt.trim().isEmpty) continue;
+        // Defensive: a 200 HTML page (error/redirect shell) is NOT a
+        // subtitle — never hand the player garbage text.
+        final head =
+            srt.trimLeft().substring(0, math.min(srt.trimLeft().length, 64));
+        final lowerHead = head.toLowerCase();
+        if (lowerHead.startsWith('<!doctype') ||
+            lowerHead.startsWith('<html')) {
+          continue;
+        }
+        return SubtitleInfo(
+          title: pick.label,
+          language: pick.language,
+          data: srt,
+        );
+      } catch (_) {
+        // One release page failed (timeout/404) — try the next one.
+        continue;
+      }
+    }
+    return null;
   }
 
   Future<String?> _fetchImdbId(int tmdbId) async {
@@ -140,6 +234,23 @@ class SubtitleDatasource {
     if (map == null) return null;
     final imdb = map['imdb_id'];
     return (imdb is String && imdb.startsWith('tt')) ? imdb : null;
+  }
+
+  /// Fetches the TMDB title + release year — SubtitleCat searches by title
+  /// (it has no IMDB-id lookup), so this is its identifier.
+  Future<({String title, String year})?> _fetchTitle(int tmdbId) async {
+    final data = await _tmdb.get('/movie/$tmdbId');
+    final map = data is Map<String, dynamic>
+        ? data
+        : (data is String ? _tryDecodeMap(data) : null);
+    if (map == null) return null;
+    final title = map['title'];
+    if (title is! String || title.trim().isEmpty) return null;
+    final releaseDate = map['release_date'];
+    final year = (releaseDate is String && releaseDate.length >= 4)
+        ? releaseDate.substring(0, 4)
+        : '';
+    return (title: title, year: year);
   }
 
   static Map<String, dynamic>? _tryDecodeMap(String raw) {
@@ -190,6 +301,25 @@ class SubtitleDatasource {
     caseSensitive: false,
   );
 
+  /// SubtitleCat release-group detail pages: `href="subs/{id}/{name}.html"`.
+  static final RegExp _scSlugRegex = RegExp(
+    r'''href="(subs/\d+/[^"]+\.html)"''',
+    caseSensitive: false,
+  );
+
+  /// SubtitleCat direct subtitle files: `href="/subs/{id}/{name}-{lang}.srt"`.
+  static final RegExp _scSrtRegex = RegExp(
+    r'''href="(/subs/\d+/[^"]+\.srt)"''',
+    caseSensitive: false,
+  );
+
+  /// The language suffix at the END of a SubtitleCat `.srt` filename
+  /// (`-id.srt`, `-en.srt`, `-pt-BR.srt`, `-es-419.srt`).
+  static final RegExp _scLangSuffixRegex = RegExp(
+    r'-([a-z]{2}(?:-[a-z0-9]{2,3})?)\.srt$',
+    caseSensitive: false,
+  );
+
   /// Language tokens as they appear in YIFY subtitle slugs
   /// (`{movie}-{year}-{language}-yify-{id}`).
   static const Map<String, String> _languageTokens = {
@@ -216,6 +346,46 @@ class SubtitleDatasource {
     'ukrainian': 'uk',
     'hebrew': 'he',
     'swedish': 'sv',
+  };
+
+  /// SubtitleCat suffixes are already ISO-ish — map the common ones to
+  /// readable labels; anything else falls back to the raw suffix.
+  static const Map<String, String> _scLanguageNames = {
+    'id': 'Indonesian',
+    'en': 'English',
+    'ar': 'Arabic',
+    'es': 'Spanish',
+    'es-419': 'Spanish (Latin America)',
+    'fr': 'French',
+    'pt': 'Portuguese',
+    'pt-br': 'Portuguese (Brazil)',
+    'ru': 'Russian',
+    'zh-cn': 'Chinese (Simplified)',
+    'zh-tw': 'Chinese (Traditional)',
+    'de': 'German',
+    'hi': 'Hindi',
+    'ja': 'Japanese',
+    'ko': 'Korean',
+    'th': 'Thai',
+    'tr': 'Turkish',
+    'it': 'Italian',
+    'nl': 'Dutch',
+    'vi': 'Vietnamese',
+    'ms': 'Malay',
+    'sr': 'Serbian',
+    'ur': 'Urdu',
+    'el': 'Greek',
+    'mn': 'Mongolian',
+    'pl': 'Polish',
+    'uk': 'Ukrainian',
+    'he': 'Hebrew',
+    'sv': 'Swedish',
+    'sh': 'Serbo-Croatian',
+    'sl': 'Slovenian',
+    'cs': 'Czech',
+    'hu': 'Hungarian',
+    'ro': 'Romanian',
+    'bg': 'Bulgarian',
   };
 
   /// Extracts the subtitle entries from a YIFY movie page. Entries are
@@ -248,6 +418,40 @@ class SubtitleDatasource {
   static String? parseZipLink(String detailHtml) {
     final match = _zipLinkRegex.firstMatch(detailHtml);
     return match?.group(1);
+  }
+
+  /// Extracts the release-group slugs from a SubtitleCat search page,
+  /// de-duplicated, in page order.
+  @visibleForTesting
+  static List<String> parseSubtitleCatSlugs(String html) {
+    final slugs = <String>[];
+    final seen = <String>{};
+    for (final match in _scSlugRegex.allMatches(html)) {
+      final slug = match.group(1)!;
+      if (seen.add(slug)) slugs.add(slug);
+    }
+    return slugs;
+  }
+
+  /// Extracts the direct `.srt` links from a SubtitleCat detail page, with
+  /// the language decoded from the filename suffix (`-id.srt` → 'id').
+  /// De-duplicated by path, in page order.
+  @visibleForTesting
+  static List<SubtitleCatLink> parseSubtitleCatSrtLinks(String html) {
+    final links = <SubtitleCatLink>[];
+    final seen = <String>{};
+    for (final match in _scSrtRegex.allMatches(html)) {
+      final path = match.group(1)!;
+      if (!seen.add(path)) continue;
+      final suffix =
+          _scLangSuffixRegex.firstMatch(path)?.group(1)?.toLowerCase();
+      links.add(SubtitleCatLink(
+        path: path,
+        language: suffix ?? 'xx',
+        label: suffix == null ? 'Subtitle' : _scLanguageNames[suffix] ?? suffix,
+      ));
+    }
+    return links;
   }
 
   /// Extracts the SRT/WebVTT text from a YIFY subtitle `.zip` archive.

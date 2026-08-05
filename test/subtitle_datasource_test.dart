@@ -55,6 +55,33 @@ const String _detailPage = '''
 const String _srtContent =
     '1\n00:00:00,500 --> 00:00:02,000\nHalo dunia, ini teks.\n\n';
 
+// --- SubtitleCat fixtures ---
+
+const String _scSearchPage = '''
+<html><body>
+<a href="subs/1532/Spider-Man-No-Way-Home-2021-1080p-YTS.html">1</a>
+<a href="subs/335/Spider-Man-No-Way-Home-2021-HDTC-STAGATV.html">2</a>
+<a href="/somewhere/else.html">nav</a>
+</body></html>
+''';
+
+const String _scDetailPage = '''
+<html><body>
+<a href="/subs/1546/Spider-Man-No-Way-Home-2021-en.srt">English</a>
+<a href="/subs/1582/Spider-Man-No-Way-Home-2021-id.srt">Indonesian</a>
+<a href="/subs/1588/Spider-Man-No-Way-Home-2021-es-419.srt">Spanish</a>
+</body></html>
+''';
+
+const String _scDetailEnglishOnly = '''
+<html><body>
+<a href="/subs/1546/Spider-Man-No-Way-Home-2021-en.srt">English</a>
+</body></html>
+''';
+
+const String _scSrtContent =
+    '1\n00:00:01,000 --> 00:00:03,000\nSubtitle Indonesia dari SubtitleCat.\n\n';
+
 Uint8List _buildZip() {
   final archive = Archive();
   archive.addFile(ArchiveFile.string(
@@ -139,6 +166,41 @@ void main() {
       ));
       final zip = Uint8List.fromList(ZipEncoder().encode(archive)!);
       expect(SubtitleDatasource.extractSrtFromZip(zip), _srtContent);
+    });
+
+    test('parseSubtitleCatSlugs extracts release-group slugs only', () {
+      final slugs = SubtitleDatasource.parseSubtitleCatSlugs(_scSearchPage);
+      expect(slugs.length, 2);
+      expect(
+        slugs.first,
+        'subs/1532/Spider-Man-No-Way-Home-2021-1080p-YTS.html',
+      );
+      expect(
+          slugs.last, 'subs/335/Spider-Man-No-Way-Home-2021-HDTC-STAGATV.html');
+    });
+
+    test('parseSubtitleCatSrtLinks decodes languages from filename suffixes',
+        () {
+      final links = SubtitleDatasource.parseSubtitleCatSrtLinks(_scDetailPage);
+      expect(links.length, 3);
+      final indo = links.firstWhere((l) => l.language == 'id');
+      expect(indo.label, 'Indonesian');
+      expect(indo.path, '/subs/1582/Spider-Man-No-Way-Home-2021-id.srt');
+      expect(links.firstWhere((l) => l.language == 'en').label, 'English');
+      expect(
+        links.firstWhere((l) => l.language == 'es-419').label,
+        'Spanish (Latin America)',
+      );
+    });
+
+    test('parseSubtitleCatSrtLinks keeps paths with unknown suffixes', () {
+      const html = '''
+<a href="/subs/999/Some.Movie.2021.part1.srt">part</a>
+''';
+      final links = SubtitleDatasource.parseSubtitleCatSrtLinks(html);
+      expect(links.length, 1);
+      expect(links.first.language, 'xx');
+      expect(links.first.path, '/subs/999/Some.Movie.2021.part1.srt');
     });
   });
 
@@ -265,6 +327,111 @@ void main() {
         'https://yifysubtitles.ch'
         '/subtitles/spider-man-no-way-home-2021-indonesian-yify-395314',
       );
+    });
+
+    test('falls back to SubtitleCat when YIFY has no subtitle (Indonesian)',
+        () async {
+      final (ds, _, _) = build(
+        {
+          '/movie/315162': ResponseBody.fromString(
+            '{"title":"Spider-Man: No Way Home",'
+            '"release_date":"2021-12-15"}',
+            200,
+            headers: {
+              'content-type': ['application/json']
+            },
+          ),
+          '/movie/315162/external_ids': ResponseBody.fromString(
+            '{"imdb_id":"tt10872600"}',
+            200,
+            headers: {
+              'content-type': ['application/json']
+            },
+          ),
+        },
+        {
+          '/movie-imdb/tt10872600':
+              ResponseBody.fromString('<html>no subtitles listed</html>', 200),
+          // SubtitleCat chain: search page → detail page → -id.srt
+          '/index.php': ResponseBody.fromBytes(utf8.encode(_scSearchPage), 200),
+          '/subs/1532/Spider-Man-No-Way-Home-2021-1080p-YTS.html':
+              ResponseBody.fromBytes(utf8.encode(_scDetailPage), 200),
+          '/subs/1582/Spider-Man-No-Way-Home-2021-id.srt':
+              ResponseBody.fromBytes(utf8.encode(_scSrtContent), 200),
+        },
+      );
+      final sub = await ds.fetchSubtitle(315162);
+      expect(sub, isNotNull);
+      expect(sub!.language, 'id');
+      expect(sub.title, 'Indonesian');
+      expect(sub.data, _scSrtContent);
+    });
+
+    test('SubtitleCat works without an IMDB id (title-only search)', () async {
+      final (ds, _, _) = build(
+        {
+          '/movie/1234': ResponseBody.fromString(
+            '{"title":"Puss in Boots: The Last Wish",'
+            '"release_date":"2022-12-07"}',
+            200,
+            headers: {
+              'content-type': ['application/json']
+            },
+          ),
+          '/movie/1234/external_ids': ResponseBody.fromString(
+            '{"id":1234}',
+            200,
+            headers: {
+              'content-type': ['application/json']
+            },
+          ),
+        },
+        {
+          '/index.php': ResponseBody.fromBytes(utf8.encode(_scSearchPage), 200),
+          '/subs/1532/Spider-Man-No-Way-Home-2021-1080p-YTS.html':
+              ResponseBody.fromBytes(utf8.encode(_scDetailPage), 200),
+          '/subs/1582/Spider-Man-No-Way-Home-2021-id.srt':
+              ResponseBody.fromBytes(utf8.encode(_scSrtContent), 200),
+        },
+      );
+      final sub = await ds.fetchSubtitle(1234);
+      expect(sub, isNotNull);
+      expect(sub!.language, 'id');
+    });
+
+    test('SubtitleCat falls back to English when no Indonesian exists',
+        () async {
+      final (ds, _, _) = build(
+        {
+          '/movie/77': ResponseBody.fromString(
+            '{"title":"Old Movie","release_date":"1960-01-01"}',
+            200,
+            headers: {
+              'content-type': ['application/json']
+            },
+          ),
+          '/movie/77/external_ids': ResponseBody.fromString(
+            '{"imdb_id":"tt0000077"}',
+            200,
+            headers: {
+              'content-type': ['application/json']
+            },
+          ),
+        },
+        {
+          '/movie-imdb/tt0000077':
+              ResponseBody.fromString('<html>no subtitles listed</html>', 200),
+          '/index.php': ResponseBody.fromBytes(utf8.encode(_scSearchPage), 200),
+          '/subs/1532/Spider-Man-No-Way-Home-2021-1080p-YTS.html':
+              ResponseBody.fromBytes(utf8.encode(_scDetailEnglishOnly), 200),
+          '/subs/1546/Spider-Man-No-Way-Home-2021-en.srt':
+              ResponseBody.fromBytes(utf8.encode(_scSrtContent), 200),
+        },
+      );
+      final sub = await ds.fetchSubtitle(77);
+      expect(sub, isNotNull);
+      expect(sub!.language, 'en');
+      expect(sub.title, 'English');
     });
 
     test('falls back to English when no Indonesian subtitle exists', () async {

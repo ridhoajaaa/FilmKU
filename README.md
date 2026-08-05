@@ -419,6 +419,27 @@ flutter doctor   # Android toolchain should be green
 
 ## 📝 Changelog
 
+## 📝 Changelog
+
+### `2026-08-05` — v1.3.20: second subtitle source (SubtitleCat) — film jadul akhirnya dapat subtitle Indonesia
+
+- **Why:** YIFY has nothing (or no Indonesian) for many older/niche movies — the
+  "no subtitles" complaint for old films. Now `SubtitleDatasource` chains TWO
+  free keyless sources: **YIFY first** (IMDB-id based, Indonesian→English), then
+  **SubtitleCat** (`subtitlecat.com`) when YIFY has nothing.
+- **SubtitleCat flow:** TMDB title + year → `index.php?search={title year}` →
+  release-group detail pages (up to 5 crawled) → direct `.srt` links with the
+  language in the filename (`-id.srt` Indonesian, `-en.srt` English) →
+  download the raw SRT (no zip, no key, no anti-bot). Indonesian preferred,
+  English fallback. Works even when the TMDB→IMDB lookup fails (title-only).
+- **Live-verified 2026-08:** 12 Angry Men (1957) → Indonesian found on page 2;
+  Casablanca (1942) → Indonesian found on page 3; Spider-Man: No Way Home →
+  Indonesian on multiple pages. Popular movies are still served by YIFY first.
+- Defensive: a 200 HTML page is never handed to the player as a subtitle;
+  one dead release page never kills the chain (per-page try/catch).
+- 219/219 tests pass (8 new: SubtitleCat parsers + fallback end-to-end),
+  analyze clean.
+
 ### `2026-08-05` — v1.3.19: Subtitle Indonesia eksternal (YIFY, tanpa API key) — film jadul akhirnya ada teksnya
 
 - **Akar masalah (dibuktikan di device):** stream 2Embed/2vcdn TIDAK punya
