@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../../core/platform/orientation_changer.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/webview/capture_webview_settings.dart';
 import '../../data/datasources/stream_source_datasource.dart';
@@ -412,6 +413,9 @@ class _WebViewPlayerScreenState extends State<WebViewPlayerScreen> {
   }
 
   Future<void> _enterLandscape() async {
+    // Explicit native landscape first (see OrientationChanger): MIUI ignores
+    // Flutter's sensor-based orientation request when auto-rotate is off.
+    await OrientationChanger.forceLandscape();
     await SystemChrome.setPreferredOrientations([
       DeviceOrientation.landscapeLeft,
       DeviceOrientation.landscapeRight,
@@ -420,6 +424,7 @@ class _WebViewPlayerScreenState extends State<WebViewPlayerScreen> {
   }
 
   Future<void> _restorePortrait() async {
+    await OrientationChanger.restore();
     await SystemChrome.setPreferredOrientations([
       DeviceOrientation.portraitUp,
     ]);
@@ -734,6 +739,10 @@ class _WebViewPlayerScreenState extends State<WebViewPlayerScreen> {
       },
       child: Scaffold(
         backgroundColor: Colors.black,
+        // See MpvPlayerScreen: MIUI phantom bottom viewInsets + Scaffold's
+        // default resize would compress the WebView player body ("controls in
+        // the middle"). Keep it full-screen.
+        resizeToAvoidBottomInset: false,
         body: SafeArea(
           // iOS: swipe down anywhere to leave fullscreen without killing the
           // app from the background. Non-iOS platforms are a pass-through.

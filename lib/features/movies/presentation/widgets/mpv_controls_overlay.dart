@@ -412,48 +412,49 @@ class _MpvControlsOverlayState extends State<MpvControlsOverlay> {
           ),
         ),
         padding: const EdgeInsets.fromLTRB(8, 8, 12, 20),
-        child: SafeArea(
-          bottom: false,
-          child: Row(
-            children: [
-              _RoundIconButton(
-                icon: Icons.picture_in_picture_alt_rounded,
-                tooltip: 'Pop up film (mini player)',
-                onPressed: widget.onMinimize,
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  widget.title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 15,
-                    fontWeight: FontWeight.w700,
-                  ),
+        // NO SafeArea here (2026-08): this screen runs in IMMERSIVE mode
+        // (system bars hidden), and on MIUI the padding reported after
+        // toggling immersive can be a STALE/phantom bottom inset — a
+        // SafeArea would push the bar up with it (the "controls in the
+        // middle" complaint). The player's own padding handles the cutout.
+        child: Row(
+          children: [
+            _RoundIconButton(
+              icon: Icons.picture_in_picture_alt_rounded,
+              tooltip: 'Pop up film (mini player)',
+              onPressed: widget.onMinimize,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                widget.title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w700,
                 ),
               ),
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                decoration: BoxDecoration(
-                  color: Colors.black54,
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: Text(
-                  widget.sourceLabel,
-                  style: const TextStyle(color: Colors.white, fontSize: 11),
-                ),
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(
+                color: Colors.black54,
+                borderRadius: BorderRadius.circular(14),
               ),
-              const SizedBox(width: 10),
-              _RoundIconButton(
-                icon: Icons.close,
-                tooltip: 'Close player',
-                onPressed: widget.onClose,
+              child: Text(
+                widget.sourceLabel,
+                style: const TextStyle(color: Colors.white, fontSize: 11),
               ),
-            ],
-          ),
+            ),
+            const SizedBox(width: 10),
+            _RoundIconButton(
+              icon: Icons.close,
+              tooltip: 'Close player',
+              onPressed: widget.onClose,
+            ),
+          ],
         ),
       ),
     );
@@ -475,35 +476,50 @@ class _MpvControlsOverlayState extends State<MpvControlsOverlay> {
           ),
         ),
         padding: const EdgeInsets.fromLTRB(8, 24, 8, 8),
-        child: SafeArea(
-          top: false,
-          child: Row(
-            children: [
-              if (_buffering)
-                // Buffering spinner replaces the play/pause button — keeps
-                // the UI honest (a spinner in the CENTER of the video read
-                // as "controls in the middle", 2026-08) without hiding the
-                // rest of the controls.
-                const Padding(
-                  padding: EdgeInsets.all(8),
-                  child: SizedBox(
-                    width: 24,
-                    height: 24,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2.5,
-                      color: Colors.white70,
-                    ),
+        // NO SafeArea here (2026-08): in immersive mode the system bars are
+        // hidden, so no bottom inset needs avoiding — and on MIUI the
+        // reported bottom padding can be stale/phantom after toggling
+        // immersive, which a SafeArea would translate into the bar floating
+        // MID-SCREEN (the "controls in the middle" complaint). The bar
+        // sticks to the real screen bottom, edge-to-edge.
+        child: Row(
+          children: [
+            if (_buffering)
+              // Buffering spinner replaces the play/pause button — keeps
+              // the UI honest (a spinner in the CENTER of the video read
+              // as "controls in the middle", 2026-08) without hiding the
+              // rest of the controls.
+              const Padding(
+                padding: EdgeInsets.all(8),
+                child: SizedBox(
+                  width: 24,
+                  height: 24,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2.5,
+                    color: Colors.white70,
                   ),
-                )
-              else
-                _RoundIconButton(
-                  icon:
-                      _playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
-                  tooltip: _playing ? 'Pause' : 'Play',
-                  onPressed: _togglePlay,
-                  size: 40,
                 ),
-              Expanded(
+              )
+            else
+              _RoundIconButton(
+                icon: _playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                tooltip: _playing ? 'Pause' : 'Play',
+                onPressed: _togglePlay,
+                size: 40,
+              ),
+            Expanded(
+              // CRITICAL (2026-08 root cause of the "controls in the
+              // middle" complaint): `Expanded` lays out flex children with
+              // TIGHT height = the Row's maxHeight — and because the bottom
+              // bar's Align loosens height, that max is the FULL WINDOW. A
+              // bare Slider therefore stretches to the whole window height →
+              // the Row and the bar Container follow → the buttons get
+              // vertically CENTERED = the control bar renders MID-SCREEN.
+              // Bounding the cross-axis height keeps the Slider (and the
+              // whole bottom bar) at its real ~48dp height, flush at the
+              // bottom.
+              child: SizedBox(
+                height: 48,
                 child: SliderTheme(
                   data: SliderTheme.of(context).copyWith(
                     trackHeight: 3,
@@ -527,51 +543,49 @@ class _MpvControlsOverlayState extends State<MpvControlsOverlay> {
                   ),
                 ),
               ),
+            ),
+            Text(
+              time,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 12,
+                fontFeatures: [FontFeature.tabularFigures()],
+              ),
+            ),
+            if (_rate != 1.0) ...[
+              const SizedBox(width: 6),
               Text(
-                time,
+                '${_rate}x',
                 style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 12,
-                  fontFeatures: [FontFeature.tabularFigures()],
+                  color: Colors.white70,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
                 ),
-              ),
-              if (_rate != 1.0) ...[
-                const SizedBox(width: 6),
-                Text(
-                  '${_rate}x',
-                  style: const TextStyle(
-                    color: Colors.white70,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ],
-              const SizedBox(width: 4),
-              _RoundIconButton(
-                icon:
-                    _muted ? Icons.volume_off_rounded : Icons.volume_up_rounded,
-                tooltip: _muted ? 'Unmute' : 'Mute',
-                onPressed: _toggleMute,
-                size: 34,
-              ),
-              _RoundIconButton(
-                icon: _subtitleVisible.value
-                    ? Icons.subtitles_rounded
-                    : Icons.subtitles_off_rounded,
-                tooltip: _subtitleVisible.value
-                    ? 'Hide subtitles'
-                    : 'Show subtitles',
-                onPressed: _toggleSubtitles,
-                size: 34,
-              ),
-              _RoundIconButton(
-                icon: Icons.settings_rounded,
-                tooltip: 'Settings',
-                onPressed: _openSettings,
-                size: 34,
               ),
             ],
-          ),
+            const SizedBox(width: 4),
+            _RoundIconButton(
+              icon: _muted ? Icons.volume_off_rounded : Icons.volume_up_rounded,
+              tooltip: _muted ? 'Unmute' : 'Mute',
+              onPressed: _toggleMute,
+              size: 34,
+            ),
+            _RoundIconButton(
+              icon: _subtitleVisible.value
+                  ? Icons.subtitles_rounded
+                  : Icons.subtitles_off_rounded,
+              tooltip:
+                  _subtitleVisible.value ? 'Hide subtitles' : 'Show subtitles',
+              onPressed: _toggleSubtitles,
+              size: 34,
+            ),
+            _RoundIconButton(
+              icon: Icons.settings_rounded,
+              tooltip: 'Settings',
+              onPressed: _openSettings,
+              size: 34,
+            ),
+          ],
         ),
       ),
     );
@@ -695,16 +709,22 @@ class _SettingsSheetState extends State<_SettingsSheet> {
               children: [
                 const Icon(Icons.text_fields, color: Colors.white54, size: 18),
                 Expanded(
-                  child: ValueListenableBuilder<double>(
-                    valueListenable: widget.subtitleSize,
-                    builder: (context, size, _) => Slider(
-                      value: size,
-                      min: MpvControlsOverlay.minSubtitleSize,
-                      max: MpvControlsOverlay.maxSubtitleSize,
-                      divisions: 8,
-                      activeColor: Colors.white,
-                      inactiveColor: Colors.white30,
-                      onChanged: (v) => widget.subtitleSize.value = v,
+                  // Same Expanded cross-axis stretch as the player's seek
+                  // bar (2026-08): bound the Slider's height so the Row (and
+                  // the sheet content) keeps its real height.
+                  child: SizedBox(
+                    height: 48,
+                    child: ValueListenableBuilder<double>(
+                      valueListenable: widget.subtitleSize,
+                      builder: (context, size, _) => Slider(
+                        value: size,
+                        min: MpvControlsOverlay.minSubtitleSize,
+                        max: MpvControlsOverlay.maxSubtitleSize,
+                        divisions: 8,
+                        activeColor: Colors.white,
+                        inactiveColor: Colors.white30,
+                        onChanged: (v) => widget.subtitleSize.value = v,
+                      ),
                     ),
                   ),
                 ),

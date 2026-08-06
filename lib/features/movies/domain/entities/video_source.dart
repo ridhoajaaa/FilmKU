@@ -22,6 +22,7 @@ class VideoSource {
     this.embedUrl,
     this.quality = 'Auto',
     this.subtitles = const <SubtitleTrack>[],
+    this.httpHeaders = const <String, String>{},
   });
 
   final String sourceId; // e.g. 'vidsrc_to'
@@ -30,6 +31,13 @@ class VideoSource {
   final String? embedUrl; // fallback embed page
   final String quality;
   final List<SubtitleTrack> subtitles;
+
+  /// Extra HTTP headers mpv must send to the stream CDN, e.g. the exact
+  /// `Referer` a provider API returns for its streams (VidNest). These
+  /// override the player's derived headers (User-Agent / Referer from the
+  /// embed URL) so a CDN that checks an exact Referer (verified 2026-08:
+  /// goodstream.cc returns 403 without it, 200 with it) plays natively.
+  final Map<String, String> httpHeaders;
 
   bool get isPlayable => videoUrl != null && videoUrl!.isNotEmpty;
 
@@ -41,6 +49,7 @@ class VideoSource {
     String? embedUrl,
     String? quality,
     List<SubtitleTrack>? subtitles,
+    Map<String, String>? httpHeaders,
   }) {
     return VideoSource(
       sourceId: sourceId ?? this.sourceId,
@@ -49,6 +58,7 @@ class VideoSource {
       embedUrl: embedUrl ?? this.embedUrl,
       quality: quality ?? this.quality,
       subtitles: subtitles ?? this.subtitles,
+      httpHeaders: httpHeaders ?? this.httpHeaders,
     );
   }
 }

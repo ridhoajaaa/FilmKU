@@ -7,6 +7,7 @@ import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
 import '../../../../core/media/mini_player_service.dart';
+import '../../../../core/platform/orientation_changer.dart';
 import '../../../../core/utils/app_logger.dart';
 import '../../data/datasources/subtitle_datasource.dart';
 import '../widgets/error_view.dart';
@@ -297,8 +298,17 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
   Future<void> _loadExternalSubtitles() async {
     final tmdbId = widget.args.tmdbId;
     if (tmdbId == null || _failed) return;
-    // The stream already carries subtitle tracks — native wins.
-    if (_player.state.tracks.subtitle.isNotEmpty) return;
+    // The stream already carries REAL subtitle tracks — native wins.
+    //
+    // 2026-08 on-device root cause (Redmi Note 8 Pro): 2vcdn streams report
+    // `subtitle=2` PHANTOM tracks — their `#EXT-X-MEDIA` lists carry no
+    // subtitle variants at all (verified from the live master/variant), so
+    // mpv enumerates empty tracks with NO title (`autoSelected=(no title)`).
+    // The old `isNotEmpty` gate then SKIPPED the external-subtitle fetch
+    // (the only real subtitle source), leaving the movie with nothing to
+    // render. Only tracks with a meaningful title/language are treated as
+    // real; title-less placeholders fall through to the external fetch.
+    if (_hasRealSubtitleTracks(_player.state.tracks.subtitle)) return;
     try {
       // Live-verified 2026-08: the YIFY chain (4 sequential HTTP calls incl.
       // the Cloudflare-protected .zip) resolves in ~1.4s from a wired
@@ -324,9 +334,11 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
         _notifySubsResult(false);
         return;
       }
-      // Re-check after the fetch: native tracks may have appeared in the
-      // meantime (or the user closed / playback failed over).
-      if (_player.state.tracks.subtitle.isNotEmpty) return;
+      // Re-check after the fetch: REAL native tracks may have appeared in
+      // the meantime (or the user closed / playback failed over). Same
+      // phantom-track filter as above — 2vcdn's title-less placeholders must
+      // not block the external subtitle we just fetched.
+      if (_hasRealSubtitleTracks(_player.state.tracks.subtitle)) return;
       await _player.setSubtitleTrack(
         SubtitleTrack.data(sub.data, title: sub.title, language: sub.language),
       );
@@ -340,6 +352,16 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
       _notifySubsResult(false);
     }
   }
+
+  /// Whether [tracks] carries REAL subtitle tracks — i.e. any track with a
+  /// meaningful title/language. 2vcdn streams report `subtitle=2` PHANTOM
+  /// tracks (their `#EXT-X-MEDIA` lists carry no subtitle variants at all),
+  /// so mpv enumerates empty tracks with no title; those must not block the
+  /// external-subtitle fetch (the only real subtitle source).
+  bool _hasRealSubtitleTracks(List<SubtitleTrack> tracks) => tracks.any((t) {
+        final title = t.title?.trim() ?? '';
+        return title.isNotEmpty && title != 'Undetermined';
+      });
 
   /// Surfaces the external-subtitle outcome ONCE per session as an overlay
   /// toast — success shows the language, failure says no subtitle was found
@@ -624,6 +646,12 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
   }
 
   Future<void> _enterLandscape() async {
+    // EXPLICIT native landscape first: on MIUI with the system auto-rotate
+    // OFF, Flutter's sensor-based setPreferredOrientations is ignored and the
+    // player stays portrait (video small in the middle, bottom bar never at
+    // the bottom — the "controls in the middle" complaint, 2026-08).
+    // setRequestedOrientation(LANDSCAPE) is honored regardless.
+    await OrientationChanger.forceLandscape();
     await SystemChrome.setPreferredOrientations([
       DeviceOrientation.landscapeLeft,
       DeviceOrientation.landscapeRight,
@@ -632,6 +660,7 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
   }
 
   Future<void> _restorePortrait() async {
+    await OrientationChanger.restore();
     await SystemChrome.setPreferredOrientations([
       DeviceOrientation.portraitUp,
     ]);
@@ -665,118 +694,123 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.black,
-      body: SafeArea(
-        // iOS: swipe down anywhere to leave fullscreen (no need to kill the
-        // app from the background). Non-iOS platforms are a pass-through.
-        child: PlayerSwipeDismiss(
-          // iOS swipe-down = "pop up film" (minimize, keep playing); full
-          // close is the X button (or the system back on Android).
-          onDismiss: _minimize,
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              // Custom full-featured controls — pause, mute, subtitles and a
-              // settings sheet (speed, subtitle size, resolution, audio) plus
-              // the top bar (minimize, close, title, source chip). Identical
-              // on iOS and Android.
-              if (_videoController != null)
-                MpvControlsOverlay(
-                  controller: _videoController!,
-                  title: widget.args.title,
-                  sourceLabel: widget.args.sourceLabel,
-                  onMinimize: _minimize,
-                  onClose: _close,
-                  notice: _subtitleNotice,
-                )
-              else
-                const ColoredBox(color: Colors.black),
-              if (_failed && _autoFailover)
-                // Stream never started — auto-switching to the backup player.
-                // COMPACT card pinned to the UPPER area (below the top bar), NOT
-                // centered: a centered card sat over the middle of the still-
-                // loading video — the exact "controls in the middle" complaint
-                // (2026-08). The video stays fully visible; the real CDN error
-                // (e.g. "HTTP 428") is shown underneath so the user sees WHY
-                // before the screen auto-pops into the WebView fallback.
-                Align(
-                  alignment: const Alignment(0, -0.7),
-                  child: Material(
-                    color: const Color(0xE616181D),
-                    borderRadius: BorderRadius.circular(14),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 26,
-                        vertical: 20,
-                      ),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const CircularProgressIndicator(
-                              color: Colors.white70),
-                          const SizedBox(height: 14),
-                          const Text(
-                            'Stream tidak dapat dimulai — '
-                            'beralih ke pemutar cadangan…',
+      // resizeToAvoidBottomInset: false — a video player has no text input,
+      // so the body must never be shrunk by any viewInset (a transient
+      // keyboard inset on some ROMs would otherwise compress the player).
+      resizeToAvoidBottomInset: false,
+      // NO outer SafeArea: the player runs in IMMERSIVE mode (system bars
+      // hidden); the bars inside [MpvControlsOverlay] handle their own
+      // insets so nothing gets pushed off the true screen edges.
+      body: PlayerSwipeDismiss(
+        // iOS swipe-down = "pop up film" (minimize, keep playing); full
+        // close is the X button (or the system back on Android).
+        onDismiss: _minimize,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            // Custom full-featured controls — pause, mute, subtitles and a
+            // settings sheet (speed, subtitle size, resolution, audio) plus
+            // the top bar (minimize, close, title, source chip). Identical
+            // on iOS and Android. Positioned.fill pins the overlay to the
+            // FULL screen edge-to-edge so no stale parent inset can squeeze
+            // the controls off the bottom.
+            Positioned.fill(
+              child: _videoController != null
+                  ? MpvControlsOverlay(
+                      controller: _videoController!,
+                      title: widget.args.title,
+                      sourceLabel: widget.args.sourceLabel,
+                      onMinimize: _minimize,
+                      onClose: _close,
+                      notice: _subtitleNotice,
+                    )
+                  : const ColoredBox(color: Colors.black),
+            ),
+            if (_failed && _autoFailover)
+              // Stream never started — auto-switching to the backup player.
+              // COMPACT card pinned to the UPPER area (below the top bar), NOT
+              // centered: a centered card sat over the middle of the still-
+              // loading video — the exact "controls in the middle" complaint
+              // (2026-08). The video stays fully visible; the real CDN error
+              // (e.g. "HTTP 428") is shown underneath so the user sees WHY
+              // before the screen auto-pops into the WebView fallback.
+              Align(
+                alignment: const Alignment(0, -0.7),
+                child: Material(
+                  color: const Color(0xE616181D),
+                  borderRadius: BorderRadius.circular(14),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 26,
+                      vertical: 20,
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const CircularProgressIndicator(color: Colors.white70),
+                        const SizedBox(height: 14),
+                        const Text(
+                          'Stream tidak dapat dimulai — '
+                          'beralih ke pemutar cadangan…',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 14,
+                          ),
+                        ),
+                        if (_failoverDetail.isNotEmpty) ...[
+                          const SizedBox(height: 8),
+                          Text(
+                            _failoverDetail,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
                             textAlign: TextAlign.center,
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 14,
+                            style: const TextStyle(
+                              color: Colors.white54,
+                              fontSize: 12,
                             ),
                           ),
-                          if (_failoverDetail.isNotEmpty) ...[
-                            const SizedBox(height: 8),
-                            Text(
-                              _failoverDetail,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              textAlign: TextAlign.center,
-                              style: const TextStyle(
-                                color: Colors.white54,
-                                fontSize: 12,
-                              ),
-                            ),
-                          ],
                         ],
-                      ),
+                      ],
                     ),
                   ),
                 ),
-              if (_failed && !_autoFailover)
-                // Compact card pinned to the UPPER area (below the top bar), NOT
-                // centered — a centered card over the middle of the video is
-                // the "controls in the middle" complaint (2026-08). The video
-                // keeps playing behind and the X / PiP stay usable; Retry /
-                // Back-to-WebView remain pressable (they're in the card, on
-                // top).
-                Align(
-                  alignment: const Alignment(0, -0.7),
-                  child: Material(
-                    color: const Color(0xF016181D),
-                    borderRadius: BorderRadius.circular(14),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 20,
-                        vertical: 18,
-                      ),
-                      child: ErrorView(
-                        compact: true,
-                        message:
-                            'Native playback failed for ${widget.args.sourceLabel}.',
-                        onRetry: () {
-                          setState(() {
-                            _failed = false;
-                            _autoFailover = false;
-                          });
-                          _open();
-                        },
-                        secondaryLabel: 'Back to WebView',
-                        onSecondary: () => _close(failed: true),
-                      ),
+              ),
+            if (_failed && !_autoFailover)
+              // Compact card pinned to the UPPER area (below the top bar), NOT
+              // centered — a centered card over the middle of the video is
+              // the "controls in the middle" complaint (2026-08). The video
+              // keeps playing behind and the X / PiP stay usable; Retry /
+              // Back-to-WebView remain pressable (they're in the card, on
+              // top).
+              Align(
+                alignment: const Alignment(0, -0.7),
+                child: Material(
+                  color: const Color(0xF016181D),
+                  borderRadius: BorderRadius.circular(14),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 20,
+                      vertical: 18,
+                    ),
+                    child: ErrorView(
+                      compact: true,
+                      message:
+                          'Native playback failed for ${widget.args.sourceLabel}.',
+                      onRetry: () {
+                        setState(() {
+                          _failed = false;
+                          _autoFailover = false;
+                        });
+                        _open();
+                      },
+                      secondaryLabel: 'Back to WebView',
+                      onSecondary: () => _close(failed: true),
                     ),
                   ),
                 ),
-            ],
-          ),
+              ),
+          ],
         ),
       ),
     );

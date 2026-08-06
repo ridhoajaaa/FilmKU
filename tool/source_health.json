@@ -12,9 +12,9 @@
     "two_embed_skin": {
       "label": "2Embed.skin",
       "verdict": "ALIVE",
-      "nativePlayable": false,
-      "lastChecked": "2026-08-01",
-      "notes": "Revived 2Embed ecosystem: embed page returns HTTP 200 with the correct title. Its /swish player is JS-rendered and did not expose a plain URL in headless probing — reliable via the WebView fallback, best-effort for native."
+      "nativePlayable": true,
+      "lastChecked": "2026-08-06",
+      "notes": "Native playback for BOTH chains since v1.3.24: legacy swish -> 2vcdn.skin direct extraction + PNG-strip relay (v1.3.11), and the rotated vnest chain -> VidNest server API (new.vidnest.fun) whose custom-base64 payload decodes to CDN streams with the exact Referer mpv needs (goodstream.cc: 403 without, 200 with). Re-verified live 2026-08-06 (Spider-Man: No Way Home)."
     },
     "two_embed": {
       "label": "2Embed.cc",

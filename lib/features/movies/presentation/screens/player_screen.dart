@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import '../../../../core/constants/app_constants.dart';
 import '../../../../core/local/settings_service.dart';
 import '../../../../core/net/hls_relay.dart';
+import '../../../../core/platform/orientation_changer.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../data/datasources/stream_source_datasource.dart';
 import '../../domain/entities/movie_details.dart';
@@ -248,6 +249,11 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   }
 
   Future<void> _enterLandscape() async {
+    // Explicit native landscape first (see OrientationChanger): MIUI ignores
+    // Flutter's sensor-based orientation request when auto-rotate is off,
+    // leaving the player portrait (video small in the middle, bottom bar
+    // mid-screen). setRequestedOrientation(LANDSCAPE) is honored regardless.
+    await OrientationChanger.forceLandscape();
     await SystemChrome.setPreferredOrientations([
       DeviceOrientation.landscapeLeft,
       DeviceOrientation.landscapeRight,
@@ -256,6 +262,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   }
 
   Future<void> _restorePortrait() async {
+    await OrientationChanger.restore();
     await SystemChrome.setPreferredOrientations([
       DeviceOrientation.portraitUp,
     ]);
@@ -434,8 +441,11 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
         // WebView-handoff streams may carry the browser session (Cookie)
         // headers captured from the WebView — merged over the standard
         // Referer/Origin/UA so cookie-gated CDNs accept the handed-off URL.
+        // Source-level headers (e.g. the exact Referer a provider API like
+        // VidNest returns for its streams) override the derived ones.
         httpHeaders: {
           ...PlayerScreen.buildStreamHeaders(source.embedUrl),
+          ...source.httpHeaders,
           ...stream.httpHeaders,
         },
         // Enables EXTERNAL subtitles (Indonesian-first) when the stream has
@@ -615,6 +625,10 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
     ref.watch(movieDetailsProvider(widget.movieId));
     return Scaffold(
       backgroundColor: Colors.black,
+      // See MpvPlayerScreen: MIUI reports phantom bottom viewInsets that
+      // Scaffold's default resize would translate into a compressed body
+      // ("controls in the middle"). Keep the loading/error body full-screen.
+      resizeToAvoidBottomInset: false,
       body: SafeArea(
         child: _buildBody(),
       ),

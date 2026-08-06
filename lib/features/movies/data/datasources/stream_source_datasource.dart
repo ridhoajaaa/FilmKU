@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
@@ -119,9 +120,43 @@ class _HtmlFetcher {
     ),
   );
 
-  static Future<String> get(String url) async {
-    final response = await _dio.get<String>(url);
+  static Future<String> get(String url, {Map<String, String>? headers}) async {
+    final response = await _dio.get<String>(
+      url,
+      options: Options(headers: headers),
+    );
     return response.data ?? '';
+  }
+}
+
+/// Fetches JSON from the VidNest server API (new.vidnest.fun) with the
+/// player page as Referer — the CDN demands an exact Referer (403 without,
+/// 200 with, verified 2026-08), and the server API returns the JSON payload
+/// the player would fetch.
+class _VidNestFetcher {
+  _VidNestFetcher._();
+
+  static final Dio _dio = Dio(
+    BaseOptions(
+      headers: {
+        'User-Agent': AppConstants.defaultUserAgent,
+        'Accept': 'application/json, text/plain, */*',
+      },
+      responseType: ResponseType.json,
+      followRedirects: true,
+      connectTimeout: const Duration(seconds: 10),
+      receiveTimeout: const Duration(seconds: 15),
+    ),
+  );
+
+  static Future<Map<String, dynamic>> get(String url, int tmdbId) async {
+    final response = await _dio.get<Map<String, dynamic>>(
+      url,
+      options: Options(
+        headers: {'Referer': 'https://vidnest.fun/movie/$tmdbId'},
+      ),
+    );
+    return response.data ?? const <String, dynamic>{};
   }
 }
 
@@ -732,17 +767,31 @@ class TwoEmbedSkinExtractor extends StreamExtractor {
       'playerUrl=${playerUrl ?? 'none'} target=$target',
     );
 
-    // FAST PATH (native, no WebView, works identically on iOS + Android):
-    // decode the packed player config over plain HTTP and get the direct
-    // `/stream/.../master.m3u8` URL, then serve it through the local HLS
-    // relay which strips the fake-PNG wrapper from every segment. This is the
-    // 2026-08 on-device evidence fix: the JW player never ran in the iOS
+    // VIDNEST FAST PATH (v1.3.24): the "browser-only" vnest chain is now
+    // natively playable too. VidNest's server API
+    // (`new.vidnest.fun/{server}/movie/{tmdb}`) returns the CDN stream URLs
+    // in a custom-base64 payload over plain HTTP, with the exact Referer the
+    // CDN demands — no WebView needed. Only runs for the vnest player (the
+    // 2vcdn fast path below handles the legacy chain).
+    if (playerUrl != null && playerUrl.contains('streamsrcs.2embed.cc/vnest')) {
+      final vid = await StreamSourceDataSource.fetchVidNestSource(tmdbId);
+      debugPrint(
+        'FILMKU_EXTRACT_TRY sourceId=$sourceId label=$label '
+        'vidNestNative=${vid?.videoUrl ?? 'null'}',
+      );
+      if (vid != null) return vid;
+    }
+
+    // 2VCDN FAST PATH (native, no WebView, works identically on iOS +
+    // Android): decode the packed player config over plain HTTP and get the
+    // direct `/stream/.../master.m3u8` URL, then serve it through the local
+    // HLS relay which strips the fake-PNG wrapper from every segment. This is
+    // the 2026-08 on-device evidence fix: the JW player never ran in the iOS
     // WebView (JS-pause on cancelled navigation), so WebView-based capture
     // could never see the stream — but the URL itself was always there.
     //
     // ONLY for the legacy 2vcdn chain: the NEW vnest player (2026-08
-    // rotation) is a browser-only Next.js → VidNest chain with no direct
-    // m3u8, so trying to unpack its page would just burn the 8s timeout.
+    // rotation) is served by VidNest (handled above).
     if (playerUrl != null && playerUrl.contains('2vcdn.skin')) {
       final direct =
           await StreamSourceDataSource.fetchTwoVcdnStreamUrl(playerUrl);
@@ -1333,6 +1382,196 @@ class StreamSourceDataSource {
       return streamUrlFromTwoVcdnPage(html);
     } catch (_) {
       return null;
+    }
+  }
+
+  /// -------------------------------------------------------------------------
+  /// VidNest (vidnest.fun) — the player behind 2Embed's NEW vnest chain
+  /// -------------------------------------------------------------------------
+  ///
+  /// 2026-08 rotation: the 2Embed shell serves
+  /// `streamsrcs.2embed.cc/vnest?tmdb={id}`, whose `vnest.js` rewrites the
+  /// player iframe to `cineby.hair/movie/{id}` (Next.js) which boots the
+  /// VidNest player. The player calls a server API on
+  /// `new.vidnest.fun/{server}/movie/{tmdb}` that answers
+  /// `{"data":"<encoded>","encrypted":true}`. The payload decodes (a
+  /// base64 variant over a CUSTOM 64-char alphabet, reversed from
+  /// `vidnest.fun`'s `decryptCipherResponse` 2026-08) to
+  /// `{"streams":[{"type":"hls|mp4","url":"...","headers":{"Referer":
+  /// "..."}}],"totalLanguages":n}`. The headers are what the CDN requires
+  /// (goodstream.cc: 403 without the Referer, 200 with it — verified
+  /// 2026-08), so carrying them makes the previously "browser-only" vnest
+  /// chain play NATIVELY over plain HTTP — no WebView, no JS.
+
+  /// The custom base64 alphabet VidNest encodes its stream payloads with.
+  @visibleForTesting
+  static const String vidNestAlphabet =
+      'RB0fpH8ZEyVLkv7c2i6MAJ5u3IKFDxlS1NTsnGaqmXYdUrtzjwObCgQP94hoeW+/=';
+
+  /// The VidNest server API endpoints, in probe order
+  /// (`https://new.vidnest.fun/{server}/movie/{tmdb}`).
+  @visibleForTesting
+  static const List<String> vidNestServers = [
+    'hollymoviehd',
+    'videasy',
+    'vidzee',
+    'nextgencloudfabric',
+  ];
+
+  /// Decodes a VidNest payload (`data` from `{"data":...,"encrypted":true}`)
+  /// into the plaintext JSON string, or null when the input is empty or
+  /// malformed.
+  ///
+  /// Replicates the site's decoder exactly (2026-08): the input is padded
+  /// with the `=` marker to a multiple of 4 (the site pads every group the
+  /// same way), then groups of 4 alphabet chars become 3 bytes; a char
+  /// absent from the alphabet — or the padding marker itself, index 64 —
+  /// stops byte emission. Verified against a live payload — the decoded text
+  /// is the `streams` JSON.
+  @visibleForTesting
+  static String? decodeVidNestPayload(String data) {
+    if (data.isEmpty) return null;
+    final lookup = <int, int>{};
+    for (var i = 0; i < vidNestAlphabet.length; i++) {
+      lookup[vidNestAlphabet.codeUnitAt(i)] = i;
+    }
+    final chars = data.codeUnits;
+    // Pad with '=' (0x3D) so a trailing partial group is processed the way
+    // the site's decoder processes it — as a padded 4-char group.
+    final padded = chars.length % 4 == 0
+        ? chars
+        : [...chars, ...List.filled(4 - chars.length % 4, 0x3D)];
+    final out = BytesBuilder(copy: false);
+    for (var i = 0; i + 4 <= padded.length; i += 4) {
+      final v0 = lookup[padded[i]] ?? 64;
+      final v1 = lookup[padded[i + 1]] ?? 64;
+      final v2 = lookup[padded[i + 2]] ?? 64;
+      final v3 = lookup[padded[i + 3]] ?? 64;
+      if (v0 == 64 || v1 == 64) break; // malformed padding mid-stream
+      out.addByte((v0 << 2) | (v1 >> 4));
+      if (v2 != 64) {
+        out.addByte(((v1 & 15) << 4) | (v2 >> 2));
+        if (v3 != 64) out.addByte(((v2 & 3) << 6) | v3);
+      }
+    }
+    if (out.isEmpty) return null;
+    return utf8.decode(out.toBytes(), allowMalformed: true);
+  }
+
+  /// Parses every stream in a VidNest response into [VideoSource] candidates
+  /// in preference order (HLS first, then `.mp4`), each carrying the exact
+  /// CDN headers the payload declares. Empty when the payload cannot be
+  /// decoded or has no streams.
+  @visibleForTesting
+  static List<VideoSource> vidNestCandidates(
+    Map<String, dynamic> response, {
+    required String sourceId,
+    required String label,
+    required String embedUrl,
+  }) {
+    final data = response['data'];
+    if (data is! String) return const <VideoSource>[];
+    final plain = decodeVidNestPayload(data);
+    if (plain == null) return const <VideoSource>[];
+    final Object? parsed;
+    try {
+      parsed = jsonDecode(plain);
+    } catch (_) {
+      return const <VideoSource>[];
+    }
+    if (parsed is! Map<String, dynamic>) return const <VideoSource>[];
+    final streams = parsed['streams'];
+    if (streams is! List || streams.isEmpty) return const <VideoSource>[];
+
+    VideoSource build(Map<String, dynamic> s) {
+      final headers = <String, String>{};
+      final h = s['headers'];
+      if (h is Map) {
+        h.forEach((k, v) {
+          if (k is String && v is String && v.isNotEmpty) headers[k] = v;
+        });
+      }
+      return VideoSource(
+        sourceId: sourceId,
+        label: label,
+        videoUrl: s['url'] as String?,
+        embedUrl: embedUrl,
+        quality: 'Auto',
+        httpHeaders: headers,
+      );
+    }
+
+    final hls = <VideoSource>[];
+    final others = <VideoSource>[];
+    for (final s in streams) {
+      if (s is! Map<String, dynamic>) continue;
+      final url = s['url'];
+      if (url is! String || url.isEmpty) continue;
+      if ((s['type'] as String?) == 'hls') {
+        hls.add(build(s));
+      } else {
+        others.add(build(s));
+      }
+    }
+    return [...hls, ...others];
+  }
+
+  /// Fetches a native stream for [tmdbId] from the VidNest server API
+  /// (`new.vidnest.fun/{server}/movie/{tmdbId}`), or null when every server
+  /// fails or none returns a playable stream. Plain HTTP — no WebView, no JS.
+  /// Hard 8s cap per server so a hanging host never starves the budget.
+  ///
+  /// The payload lists several HLS variants; some are clean master→variant
+  /// chains (play directly in mpv with the carried Referer) while others are
+  /// media playlists with PNG-wrapped segments (the 2vcdn-style anti-leech —
+  /// unplayable without a Referer-aware relay, which [HlsRelay] is not). A
+  /// live master probe prefers the directly-playable chain; the parser's
+  /// deterministic pick remains the fallback.
+  static Future<VideoSource?> fetchVidNestSource(
+    int tmdbId, {
+    List<String> servers = vidNestServers,
+  }) async {
+    for (final server in servers) {
+      try {
+        final response = await _VidNestFetcher.get(
+                'https://new.vidnest.fun/$server/movie/$tmdbId', tmdbId)
+            .timeout(const Duration(seconds: 8));
+        final candidates = vidNestCandidates(
+          response,
+          sourceId: 'two_embed_skin',
+          label: '2Embed.skin',
+          embedUrl: 'https://www.2embed.skin/embed/movie/$tmdbId',
+        );
+        if (candidates.isEmpty) continue;
+        for (final candidate in candidates) {
+          if (await _isHlsMaster(candidate)) return candidate;
+        }
+        return candidates.first; // best effort without a live master
+      } catch (_) {
+        // try the next server
+      }
+    }
+    return null;
+  }
+
+  /// Whether [candidate]'s media URL serves an HLS MASTER playlist
+  /// (starts with `#EXTM3U` and carries an `#EXT-X-STREAM-INF` variant line)
+  /// when fetched with the stream's own CDN headers. A media playlist
+  /// (direct `#EXTINF` segments) is rejected — on VidNest those segments are
+  /// PNG-wrapped and unplayable in mpv without a Referer-aware relay.
+  static Future<bool> _isHlsMaster(VideoSource candidate) async {
+    final url = candidate.videoUrl;
+    if (url == null) return false;
+    try {
+      final body = await _HtmlFetcher.get(url, headers: {
+        ...candidate.httpHeaders,
+        // The probe only needs the head of the playlist — a media
+        // playlist can be hundreds of KB.
+        'Range': 'bytes=0-2048',
+      }).timeout(const Duration(seconds: 6));
+      return body.startsWith('#EXTM3U') && body.contains('#EXT-X-STREAM-INF');
+    } catch (_) {
+      return false;
     }
   }
 

@@ -419,6 +419,80 @@ flutter doctor   # Android toolchain should be green
 
 ## 📝 Changelog
 
+### `2026-08-07` — v1.3.26: controls REALLY at the bottom (root cause: Expanded+Slider stretched the bar full-height)
+
+- **Fixed: the control bar rendered MID-SCREEN on every device.** Earlier
+  builds blamed MIUI insets/SafeArea, but the real root cause was a pure
+  Flutter layout bug, reproduced in a widget test on any machine:
+  `Expanded(child: Slider(...))` — `Expanded` lays flex children out with
+  TIGHT height = the Row's maxHeight, and because the bottom bar's `Align`
+  loosens height, that max was the FULL WINDOW. The bare Slider stretched to
+  the whole window height → the Row and the bar Container followed → the
+  buttons got vertically CENTERED → the whole control bar rendered mid-
+  screen while playing (pre-playback it looked fine, which is why earlier
+  on-device diagnostics misled us).
+- **Fix:** bound the Slider's cross-axis height to 48dp (`SizedBox(height:
+  48)` inside the `Expanded`) — the bar now shrink-wraps to its real height
+  and sits flush at the bottom, like a normal player. The settings-sheet
+  subtitle-size slider had the same latent bug and got the same fix.
+- Proven by a new regression test (`test/player_bar_position_test.dart`):
+  the exact structure renders the bar 800×80 at the bottom with the fix vs
+  800×600 (full height) without it. 50/50 tests pass, analyze clean.
+
+### `2026-08-06` — v1.3.25: controls back at the bottom + subtitles actually render (on-device fixes)
+
+- **Fixed: controls appeared mid-screen on some devices.** Root cause: the
+  player ran in immersive mode and the OUTER `SafeArea` (redundant — each
+  bar inside the overlay applies its own) consumed a stale/phantom inset on
+  MIUI (Redmi Note 8 Pro, verified on-device via screenshot analysis),
+  compressing the whole UI to ~55% of the screen height — the bottom control
+  bar rendered at y≈50% with the video squashed into a small left strip.
+  Removed the outer SafeArea and pinned the overlay with `Positioned.fill`
+  so the controls sit edge-to-edge at the real bottom.
+- **Fixed: external subtitles never loaded on 2vcdn streams.** Root cause:
+  2vcdn playlists carry NO real `#EXT-X-MEDIA` subtitle variants (verified
+  from the live master + variant playlists), but mpv enumerated the stream as
+  having `subtitle=2` — empty PHANTOM tracks with no title. The old
+  `isNotEmpty` gate then skipped the external-subtitle fetch (YIFY/SubtitleCat
+  — the only real subtitle source), leaving the movie with nothing to render.
+  The gate now treats only tracks with a real title/language as native;
+  title-less placeholders fall through to the external fetch.
+- Verified on-device: `FILMKU_MPV_TRACKS subtitle=2` (phantom) → external
+  fetch now runs; layout re-checked via screenshot.
+
+### `2026-08-06` — v1.3.24: 2Embed vnest chain now plays NATIVELY (VidNest cracked)
+
+- **The "browser-only" vnest chain is native now.** v1.3.22 had to hand the
+  rotated 2Embed chain (`shell → streamsrcs.2embed.cc/vnest → cineby.hair →
+  VidNest`) to the visible WebView because it was "a browser-only Next.js →
+  VidNest chain with no direct m3u8". Not anymore: the VidNest player's server
+  API (`new.vidnest.fun/{server}/movie/{tmdb}`) answers
+  `{"data":"<encoded>","encrypted":true}` over plain HTTP, and the payload
+  is just a base64 variant over a **custom 64-char alphabet** (reversed from
+  vidnest.fun's `decryptCipherResponse`, 2026-08) → a `streams` JSON carrying
+  the exact CDN headers. No WebView, no JS.
+- **`StreamSourceDataSource` additions:** `decodeVidNestPayload` (custom-
+  alphabet base64), `vidNestCandidates` (HLS-first parse, carries each
+  stream's `headers`), `fetchVidNestSource` (server loop + live master
+  probe). `TwoEmbedSkinExtractor` now runs this fast path whenever the
+  shell resolves to the vnest player, BEFORE the headless WebView fallback.
+- **`VideoSource.httpHeaders`** — new optional field carrying per-stream CDN
+  headers; `PlayerScreen` merges them over the derived Referer/Origin/UA so
+  mpv sends exactly what the CDN demands.
+- **Live-verified 2026-08 (Spider-Man: No Way Home):** the payload decodes to
+  3 streams; the `GS-25` master chain plays directly in mpv with its Referer
+  (`goodstream.cc` 403 without it, 200 with it — and the `.csv`/`.svg`/`.css`
+  segment names are disguised TS, byte `0x47`, which mpv sniffs by content).
+  The `LS-25` media playlist (PNG-wrapped segments) is correctly skipped by
+  the master probe; the `MAIN` `.mp4` answers 451 outside a real browser and
+  stays unused. The goodstream Referer means this chain is NOT relay-able
+  (`HlsRelay` sends no custom headers) — it plays straight from mpv.
+- New evidence tools: `tool/probe_vidnest.sh`, `tool/probe_vidnest_server.sh`,
+  `tool/probe_vidnest_cipher.sh`, `tool/decrypt_vidnest.py` and
+  `tool/vidnest_e2e_standalone.dart` (live chain verification).
+- 20 new unit tests (decode round-trips, parser, candidates, header
+  carrying). **246/246 tests pass, analyze clean.**
+
 ### `2026-08-06` — v1.3.23: keyless subtitles + honest feedback + nothing mid-screen
 
 - **Root cause of "no subtitles" on iOS (2026-08):** the external subtitle fetch
