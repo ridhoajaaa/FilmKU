@@ -14,6 +14,10 @@ class _FakeSubAdapter implements HttpClientAdapter {
 
   final Map<String, ResponseBody> responses;
 
+  /// Every request path this adapter served — lets tests assert that the
+  /// keyless metadata path makes NO TMDB request at all.
+  final List<String> hits = [];
+
   /// Referer header sent for each request path — lets tests assert that the
   /// .zip download carries the YIFY detail page as Referer (Cloudflare
   /// 403s it otherwise).
@@ -25,6 +29,7 @@ class _FakeSubAdapter implements HttpClientAdapter {
     Stream<Uint8List>? requestStream,
     Future<void>? cancelFuture,
   ) async {
+    hits.add(options.uri.path);
     referers[options.uri.path] = options.headers['Referer'] as String?;
     final hit = responses[options.uri.path];
     if (hit != null) return hit;
@@ -465,6 +470,81 @@ void main() {
       final sub = await ds.fetchSubtitle(77);
       expect(sub, isNotNull);
       expect(sub!.language, 'en');
+    });
+  });
+
+  group('SubtitleDatasource.fetchSubtitleFromMeta (keyless metadata path)', () {
+    (SubtitleDatasource, _FakeSubAdapter, _FakeSubAdapter) buildKeyless(
+      Map<String, ResponseBody> yifyResponses,
+    ) {
+      // TMDB adapter starts EMPTY — any TMDB request would 404 and the test
+      // asserts NONE happened (the metadata path must be keyless).
+      final tmdbDio = Dio()..httpClientAdapter = _FakeSubAdapter({});
+      final yifyDio = Dio(
+        BaseOptions(responseType: ResponseType.bytes),
+      )..httpClientAdapter = _FakeSubAdapter(yifyResponses);
+      final ds =
+          SubtitleDatasource(tmdb: ApiClient(dio: tmdbDio), dio: yifyDio);
+      return (
+        ds,
+        tmdbDio.httpClientAdapter as _FakeSubAdapter,
+        yifyDio.httpClientAdapter as _FakeSubAdapter
+      );
+    }
+
+    test('title+year drives SubtitleCat with NO TMDB request at all', () async {
+      final (ds, tmdb, _) = buildKeyless({
+        '/index.php': ResponseBody.fromBytes(utf8.encode(_scSearchPage), 200),
+        '/subs/1532/Spider-Man-No-Way-Home-2021-1080p-YTS.html':
+            ResponseBody.fromBytes(utf8.encode(_scDetailPage), 200),
+        '/subs/1582/Spider-Man-No-Way-Home-2021-id.srt':
+            ResponseBody.fromBytes(utf8.encode(_scSrtContent), 200),
+      });
+      final sub = await ds.fetchSubtitleFromMeta(
+        title: 'Spider-Man: No Way Home',
+        year: '2021',
+      );
+      expect(sub, isNotNull);
+      expect(sub!.language, 'id');
+      expect(sub.title, 'Indonesian');
+      expect(sub.data, _scSrtContent);
+      // The whole point of the metadata path: NO TMDB request.
+      expect(tmdb.hits, isEmpty);
+    });
+
+    test('title alone (no year) still reaches SubtitleCat', () async {
+      final (ds, tmdb, _) = buildKeyless({
+        '/index.php': ResponseBody.fromBytes(utf8.encode(_scSearchPage), 200),
+        '/subs/1532/Spider-Man-No-Way-Home-2021-1080p-YTS.html':
+            ResponseBody.fromBytes(utf8.encode(_scDetailPage), 200),
+        '/subs/1582/Spider-Man-No-Way-Home-2021-id.srt':
+            ResponseBody.fromBytes(utf8.encode(_scSrtContent), 200),
+      });
+      final sub = await ds.fetchSubtitleFromMeta(title: 'Spider-Man');
+      expect(sub, isNotNull);
+      expect(sub!.language, 'id');
+      expect(tmdb.hits, isEmpty);
+    });
+
+    test('a passed imdbId drives YIFY with NO TMDB request', () async {
+      final (ds, tmdb, _) = buildKeyless({
+        '/movie-imdb/tt10872600':
+            ResponseBody.fromBytes(utf8.encode(_moviePage), 200),
+        '/subtitles/spider-man-no-way-home-2021-indonesian-yify-395314':
+            ResponseBody.fromBytes(utf8.encode(_detailPage), 200),
+        '/subtitle/spider-man-no-way-home-2021-indonesian-yify-395314.zip':
+            ResponseBody.fromBytes(_buildZip(), 200),
+      });
+      final sub = await ds.fetchSubtitleFromMeta(imdbId: 'tt10872600');
+      expect(sub, isNotNull);
+      expect(sub!.language, 'id');
+      expect(tmdb.hits, isEmpty);
+    });
+
+    test('returns null when nothing is passed and no provider answers',
+        () async {
+      final (ds, _, _) = buildKeyless({});
+      expect(await ds.fetchSubtitleFromMeta(), isNull);
     });
   });
 }

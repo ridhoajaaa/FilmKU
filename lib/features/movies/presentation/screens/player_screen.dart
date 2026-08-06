@@ -438,9 +438,12 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
           ...PlayerScreen.buildStreamHeaders(source.embedUrl),
           ...stream.httpHeaders,
         },
-        // Enables EXTERNAL subtitles (keyless YIFY, Indonesian-first) when
-        // the stream has no subtitle tracks of its own.
+        // Enables EXTERNAL subtitles (Indonesian-first) when the stream has
+        // no subtitle tracks of its own — title + year make SubtitleCat work
+        // WITHOUT a TMDB API key (2026-08: keyless iOS builds showed no
+        // subtitles because the old path needed TMDB for every lookup).
         tmdbId: widget.movieId,
+        movieYear: _movieYear(),
       ),
     );
     if (!mounted) return;
@@ -590,6 +593,18 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   String _movieTitle() {
     final details = ref.read(movieDetailsProvider(widget.movieId));
     return _movieTitleFrom(details);
+  }
+
+  /// Release year of the movie (from its TMDB release date) — passed to the
+  /// mpv player so EXTERNAL subtitles can use SubtitleCat's title+year
+  /// search without any TMDB API call.
+  String? _movieYear() {
+    final details = ref.read(movieDetailsProvider(widget.movieId));
+    if (details is AsyncData) {
+      final date = details.value?.movie.releaseDate;
+      if (date != null && date.length >= 4) return date.substring(0, 4);
+    }
+    return null;
   }
 
   @override

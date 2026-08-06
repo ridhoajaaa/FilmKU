@@ -22,6 +22,8 @@ class MpvPlayerArgs {
     this.startAt = Duration.zero,
     this.httpHeaders = const <String, String>{},
     this.tmdbId,
+    this.movieYear,
+    this.imdbId,
   });
 
   /// Direct `.m3u8`/`.mp4` URL captured from inside the WebView fallback.
@@ -40,6 +42,16 @@ class MpvPlayerArgs {
   /// keyless) when the stream itself has no subtitle tracks (the common
   /// case: 2vcdn playlists carry zero `#EXT-X-MEDIA` lines).
   final int? tmdbId;
+
+  /// Release year of the movie — lets the EXTERNAL subtitle fetch use
+  /// SubtitleCat's title+year search WITHOUT a TMDB API key (2026-08: iOS
+  /// builds without a key silently showed "no subtitles" because the old
+  /// path needed TMDB for every lookup).
+  final String? movieYear;
+
+  /// IMDB id (when already known) — lets the YIFY subtitle chain run
+  /// without a TMDB `external_ids` lookup.
+  final String? imdbId;
 
   /// Extra HTTP headers sent on every request to the stream CDN (mpv's
   /// `http-header-fields`).
@@ -216,6 +228,15 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
   /// subtitles"). The user's own toggle / settings take over afterwards.
   bool _subtitleAutoSelected = false;
 
+  /// One-shot toast channel to the controls overlay: external-subtitle load
+  /// outcomes are surfaced so "no subtitles" is never a silent failure
+  /// (2026-08: the fetch failed quietly on iOS builds without a TMDB key).
+  final ValueNotifier<String?> _subtitleNotice = ValueNotifier<String?>(null);
+
+  /// True once the external-subtitle outcome toast has been shown (one per
+  /// session, so a resume doesn't re-toast).
+  bool _subsResultShown = false;
+
   @override
   void initState() {
     super.initState();
@@ -285,13 +306,22 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
       // tight and killed the fetch before it finished (the symptom: "no
       // subtitles" while the laptop probe succeeds). 40s keeps it best-
       // effort (background, never blocks playback) but survives mobile.
-      appLog('FILMKU_SUBS_START', 'tmdbId=$tmdbId');
+      appLog(
+          'FILMKU_SUBS_START',
+          'tmdbId=$tmdbId title=${widget.args.title} '
+              'year=${widget.args.movieYear ?? '-'} imdb=${widget.args.imdbId ?? '-'}');
       final sub = await SubtitleDatasource()
-          .fetchSubtitle(tmdbId)
+          .fetchSubtitleFromMeta(
+            tmdbId: tmdbId,
+            title: widget.args.title,
+            year: widget.args.movieYear,
+            imdbId: widget.args.imdbId,
+          )
           .timeout(const Duration(seconds: 40));
       if (!mounted || _failed || sub == null) {
         appLog('FILMKU_SUBS_NULL',
             'tmdbId=$tmdbId mounted=$mounted failed=$_failed');
+        _notifySubsResult(false);
         return;
       }
       // Re-check after the fetch: native tracks may have appeared in the
@@ -304,9 +334,24 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
         'FILMKU_SUBS',
         'loaded ${sub.language} ${sub.data.length} chars tmdbId=$tmdbId',
       );
+      _notifySubsResult(true, language: sub.language);
     } catch (error) {
       appLog('FILMKU_SUBS', 'failed tmdbId=$tmdbId $error');
+      _notifySubsResult(false);
     }
+  }
+
+  /// Surfaces the external-subtitle outcome ONCE per session as an overlay
+  /// toast — success shows the language, failure says no subtitle was found
+  /// (instead of the old silent null → "no subtitles" mystery).
+  void _notifySubsResult(bool ok, {String? language}) {
+    if (_subsResultShown || !mounted) return;
+    _subsResultShown = true;
+    _subtitleNotice.value = ok
+        ? ((language == null || language.isEmpty)
+            ? 'Subtitle dimuat.'
+            : 'Subtitle $language dimuat.')
+        : 'Subtitel tidak ditemukan untuk film ini.';
   }
 
   Future<void> _open() async {
@@ -567,6 +612,7 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
     _playingSub?.cancel();
     _positionSub?.cancel();
     _tracksSub?.cancel();
+    _subtitleNotice.dispose();
     _restorePortrait();
     // Player + local HLS relay lifecycle is owned by MiniPlayerService so the
     // mini player keeps playing after this route pops. Only a pop that was
@@ -640,6 +686,7 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
                   sourceLabel: widget.args.sourceLabel,
                   onMinimize: _minimize,
                   onClose: _close,
+                  notice: _subtitleNotice,
                 )
               else
                 const ColoredBox(color: Colors.black),

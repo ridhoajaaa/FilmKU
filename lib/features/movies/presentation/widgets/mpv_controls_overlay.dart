@@ -32,6 +32,7 @@ class MpvControlsOverlay extends StatefulWidget {
     required this.sourceLabel,
     required this.onMinimize,
     required this.onClose,
+    this.notice,
   });
 
   final VideoController controller;
@@ -43,6 +44,11 @@ class MpvControlsOverlay extends StatefulWidget {
 
   /// Fully close the player (playback stops).
   final VoidCallback onClose;
+
+  /// One-shot toast channel from the owning screen (external-subtitle load
+  /// outcomes). Non-null values are shown as a brief toast in the UPPER
+  /// area (below the top bar), never centered.
+  final ValueNotifier<String?>? notice;
 
   /// Speed presets offered in the settings sheet. Exposed for tests.
   static const List<double> speedOptions = [
@@ -106,9 +112,15 @@ class _MpvControlsOverlayState extends State<MpvControlsOverlay> {
   @override
   void initState() {
     super.initState();
+    widget.notice?.addListener(_onNotice);
     _restorePreferences();
     _subscribe();
     _armHideTimer();
+  }
+
+  void _onNotice() {
+    final message = widget.notice?.value;
+    if (message != null && mounted) _showToast(message);
   }
 
   /// Applies the persisted player preferences (playback speed, subtitle size,
@@ -184,6 +196,7 @@ class _MpvControlsOverlayState extends State<MpvControlsOverlay> {
 
   @override
   void dispose() {
+    widget.notice?.removeListener(_onNotice);
     _hideTimer?.cancel();
     _toastTimer?.cancel();
     for (final sub in _subs) {
@@ -345,14 +358,12 @@ class _MpvControlsOverlayState extends State<MpvControlsOverlay> {
             onTap: _toggleVisible,
           ),
         ),
-        if (_buffering)
-          const Center(
-            child: CircularProgressIndicator(color: Colors.white70),
-          ),
         // Top bar (PiP, title, source, close X): ALWAYS visible so the
         // close button is always pressable — only the bottom controls
         // auto-hide (2026-08: hiding the X with the controls made it read
-        // as broken).
+        // as broken). NOTE: the buffering spinner lives INSIDE the bottom
+        // bar (replacing the play/pause icon) — nothing renders mid-screen
+        // (2026-08: a centered spinner read as "controls in the middle").
         _buildTopBar(),
         // Bottom bar: play/pause, seek + time, mute, subtitles, settings.
         AnimatedOpacity(
@@ -468,12 +479,30 @@ class _MpvControlsOverlayState extends State<MpvControlsOverlay> {
           top: false,
           child: Row(
             children: [
-              _RoundIconButton(
-                icon: _playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
-                tooltip: _playing ? 'Pause' : 'Play',
-                onPressed: _togglePlay,
-                size: 40,
-              ),
+              if (_buffering)
+                // Buffering spinner replaces the play/pause button — keeps
+                // the UI honest (a spinner in the CENTER of the video read
+                // as "controls in the middle", 2026-08) without hiding the
+                // rest of the controls.
+                const Padding(
+                  padding: EdgeInsets.all(8),
+                  child: SizedBox(
+                    width: 24,
+                    height: 24,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2.5,
+                      color: Colors.white70,
+                    ),
+                  ),
+                )
+              else
+                _RoundIconButton(
+                  icon:
+                      _playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                  tooltip: _playing ? 'Pause' : 'Play',
+                  onPressed: _togglePlay,
+                  size: 40,
+                ),
               Expanded(
                 child: SliderTheme(
                   data: SliderTheme.of(context).copyWith(

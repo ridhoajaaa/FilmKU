@@ -121,10 +121,55 @@ class SubtitleDatasource {
         final yify = await _fetchFromYify(imdbId);
         if (yify != null) return yify;
       }
-      // YIFY had nothing (or no IMDB id) — try the keyless title-search
-      // provider. Works even when the TMDB→IMDB lookup failed above.
-      final subcat = await _fetchFromSubtitleCat(tmdbId);
-      if (subcat != null) return subcat;
+      // Explicit `await` is REQUIRED: `return _fetchFromSubtitleCatByTmdb(...)`
+      // (implicit return-await) would let a CDN 404 escape the try/catch —
+      // Dart only routes errors through an enclosing catch for EXPLICIT
+      // awaits (verified empirically 2026-08).
+      return await _fetchFromSubtitleCatByTmdb(tmdbId);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Fetches the best available subtitle using movie metadata the CALLER
+  /// already has — so subtitles work WITHOUT a TMDB API key.
+  ///
+  /// [title] (+ [year]) is enough for SubtitleCat (it searches by title);
+  /// [imdbId] (when already known) enables the YIFY chain directly. Metadata
+  /// the caller lacks is looked up via TMDB as a best-effort fallback
+  /// (requires an API key, which may be absent on some builds — the 2026-08
+  /// reason iOS builds showed "no subtitles" while the laptop probe worked).
+  ///
+  /// Indonesian first, English as fallback; any network/parse error returns
+  /// null (subtitles must never break playback).
+  Future<SubtitleInfo?> fetchSubtitleFromMeta({
+    int? tmdbId,
+    String? title,
+    String? year,
+    String? imdbId,
+  }) async {
+    try {
+      var resolvedImdb = imdbId;
+      if (resolvedImdb == null && tmdbId != null) {
+        resolvedImdb = await _fetchImdbId(tmdbId);
+      }
+      if (resolvedImdb != null) {
+        final yify = await _fetchFromYify(resolvedImdb);
+        if (yify != null) return yify;
+      }
+      // YIFY had nothing (or no IMDB id) — SubtitleCat only needs the title
+      // (+ year), so it works with no TMDB key when the caller passes the
+      // metadata (the common case from the movie object in the UI).
+      if (title != null && title.trim().isNotEmpty) {
+        final subcat = await _fetchFromSubtitleCat(title, year: year);
+        if (subcat != null) return subcat;
+      }
+      // Last resort: TMDB-only lookups (title via TMDB for SubtitleCat).
+      // Explicit `await` (see fetchSubtitle): implicit return-await would
+      // let a CDN 404 escape the try/catch.
+      if (tmdbId != null) {
+        return await _fetchFromSubtitleCatByTmdb(tmdbId);
+      }
       return null;
     } catch (_) {
       // Best-effort — subtitles must never break playback.
@@ -170,14 +215,21 @@ class SubtitleDatasource {
     );
   }
 
-  /// SubtitleCat flow: TMDB title + year → search page → release detail
-  /// pages → direct `.srt` download. Indonesian preferred, English fallback.
-  Future<SubtitleInfo?> _fetchFromSubtitleCat(int tmdbId) async {
+  /// SubtitleCat flow using only the TMDB id: title + year are fetched via
+  /// TMDB first (requires an API key), then the keyless search follows.
+  Future<SubtitleInfo?> _fetchFromSubtitleCatByTmdb(int tmdbId) async {
     final titleInfo = await _fetchTitle(tmdbId);
     if (titleInfo == null) return null;
-    final query = titleInfo.year.isEmpty
-        ? titleInfo.title
-        : '${titleInfo.title} ${titleInfo.year}';
+    return await _fetchFromSubtitleCat(titleInfo.title, year: titleInfo.year);
+  }
+
+  /// SubtitleCat flow: search by [title] (+ [year]) → search page → release
+  /// detail pages → direct `.srt` download. Indonesian preferred, English
+  /// fallback. No TMDB/IMDB needed — the caller may pass the title straight
+  /// from the movie object it already holds.
+  Future<SubtitleInfo?> _fetchFromSubtitleCat(String title,
+      {String? year}) async {
+    final query = (year == null || year.isEmpty) ? title : '$title $year';
     final searchHtml = await _getText(
       'https://subtitlecat.com/index.php'
       '?search=${Uri.encodeQueryComponent(query)}',

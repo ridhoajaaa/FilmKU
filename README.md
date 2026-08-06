@@ -419,6 +419,26 @@ flutter doctor   # Android toolchain should be green
 
 ## 📝 Changelog
 
+### `2026-08-06` — v1.3.23: keyless subtitles + honest feedback + nothing mid-screen
+
+- **Root cause of "no subtitles" on iOS (2026-08):** the external subtitle fetch
+  (YIFY → SubtitleCat) needed the TMDB API key for EVERY lookup (`external_ids`
+  + title lookup). iOS builds without a key silently returned null → the CC icon
+  stayed crossed out forever. The movie **title + release year are now passed
+  straight from the movie object** into the player, so SubtitleCat's title+year
+  search runs with NO TMDB call at all. (YIFY still uses TMDB→IMDB when a key
+  exists; SubtitleCat covers the keyless case.)
+- **No more silent failure:** the player shows a brief toast on load outcome —
+  "Subtitle Indonesian dimuat." on success, "Subtitel tidak ditemukan untuk
+  film ini." when neither source has one (one-shot per session).
+- **Nothing renders mid-screen:** the buffering spinner moved from the screen
+  CENTER into the bottom control bar (replacing the play/pause icon while
+  buffering) — nothing floats over the middle of the video anymore (the
+  2026-08 "controls in the middle" complaint). Top/bottom bars stay pinned.
+- **Real Dart gotcha fixed en route:** `return future();` (implicit
+  return-await) lets a CDN 404 escape `try/catch` — the subtitle chain now uses
+  explicit `await` everywhere (proven by a minimal repro + unit tests).
+
 ### `2026-08-06` — v1.3.22: 2Embed chain rotation — vnest/cineby resolution + anti-frame fix
 
 - **Root cause of the iOS "muter-muter" regression:** on-device + headless
