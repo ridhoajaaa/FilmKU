@@ -68,6 +68,20 @@ class MpvControlsOverlay extends StatefulWidget {
   /// Step used by the rewind/forward buttons.
   static const Duration seekStep = Duration(seconds: 5);
 
+  /// Step used by the double-tap seek gesture (left/right screen sides).
+  static const Duration gestureSeekStep = Duration(seconds: 10);
+
+  /// Maps an x-offset (logical px) to a horizontal third of [width] — the
+  /// double-tap seek zones: left third = rewind, right third = forward,
+  /// middle = no-op. Exposed for tests.
+  static SeekZone seekZoneFor(double x, double width) {
+    if (width <= 0) return SeekZone.middle;
+    final third = width / 3;
+    if (x < third) return SeekZone.left;
+    if (x > width - third) return SeekZone.right;
+    return SeekZone.middle;
+  }
+
   /// Clamps [position] + [delta] to the playable range `[0, duration]` — the
   /// target of a ±[seekStep] seek. A zero/unknown duration disables the upper
   /// clamp (mpv hasn't reported the real length yet). Exposed for tests.
@@ -115,6 +129,13 @@ class _MpvControlsOverlayState extends State<MpvControlsOverlay> {
   String? _toast;
   Timer? _toastTimer;
 
+  /// Double-tap seek feedback: where the tap landed (for zone detection) and
+  /// the transient icon rendered AT the tap point so the seek is visible.
+  Offset? _doubleTapPos;
+  IconData? _seekFeedbackIcon;
+  Offset? _seekFeedbackPos;
+  Timer? _seekFeedbackTimer;
+
   // Subtitle state: a ValueNotifier so the modal settings sheet can update it
   // live while the (underlying) SubtitleViewConfiguration rebuilds.
   final ValueNotifier<bool> _subtitleVisible = ValueNotifier<bool>(true);
@@ -139,6 +160,41 @@ class _MpvControlsOverlayState extends State<MpvControlsOverlay> {
   void _onNotice() {
     final message = widget.notice?.value;
     if (message != null && mounted) _showToast(message);
+  }
+
+  void _onDoubleTapDown(TapDownDetails details) {
+    _doubleTapPos = details.localPosition;
+  }
+
+  /// Double-tap seek: left third of the screen rewinds [gestureSeekStep]
+  /// (10s), right third forwards. Shows a brief icon AT the tap point
+  /// (YouTube-style), cleared by [_seekFeedbackTimer].
+  void _onDoubleTap() {
+    final pos = _doubleTapPos;
+    if (pos == null) return;
+    final size = context.size;
+    if (size == null) return;
+    switch (MpvControlsOverlay.seekZoneFor(pos.dx, size.width)) {
+      case SeekZone.left:
+        _seekBy(-MpvControlsOverlay.gestureSeekStep);
+        _showSeekFeedback(Icons.replay_10_rounded, pos);
+      case SeekZone.right:
+        _seekBy(MpvControlsOverlay.gestureSeekStep);
+        _showSeekFeedback(Icons.forward_10_rounded, pos);
+      case SeekZone.middle:
+        break;
+    }
+  }
+
+  void _showSeekFeedback(IconData icon, Offset pos) {
+    _seekFeedbackTimer?.cancel();
+    setState(() {
+      _seekFeedbackIcon = icon;
+      _seekFeedbackPos = pos;
+    });
+    _seekFeedbackTimer = Timer(const Duration(milliseconds: 550), () {
+      if (mounted) setState(() => _seekFeedbackIcon = null);
+    });
   }
 
   /// Applies the persisted player preferences (playback speed, subtitle size,
@@ -217,6 +273,7 @@ class _MpvControlsOverlayState extends State<MpvControlsOverlay> {
     widget.notice?.removeListener(_onNotice);
     _hideTimer?.cancel();
     _toastTimer?.cancel();
+    _seekFeedbackTimer?.cancel();
     for (final sub in _subs) {
       sub.cancel();
     }
@@ -382,12 +439,15 @@ class _MpvControlsOverlayState extends State<MpvControlsOverlay> {
             ),
           ),
         ),
-        // Tap layer: toggles controls. Sits UNDER the bars so button taps
-        // never reach it.
+        // Tap layer: toggles controls on single tap; double-tap on the left
+        // third rewinds 10s and the right third forwards 10s. Sits UNDER
+        // the bars so button taps never reach it.
         Positioned.fill(
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
             onTap: _toggleVisible,
+            onDoubleTapDown: _onDoubleTapDown,
+            onDoubleTap: _onDoubleTap,
           ),
         ),
         // Top bar (PiP, title, source, close X): ALWAYS visible so the
@@ -423,6 +483,29 @@ class _MpvControlsOverlayState extends State<MpvControlsOverlay> {
                 child: Text(
                   _toast!,
                   style: const TextStyle(color: Colors.white, fontSize: 13),
+                ),
+              ),
+            ),
+          ),
+        // Double-tap seek feedback: a brief circular icon AT the tap point
+        // (YouTube-style), auto-cleared by [_seekFeedbackTimer]. Transient
+        // feedback, NOT a control — it never intercepts taps.
+        if (_seekFeedbackIcon != null && _seekFeedbackPos != null)
+          Positioned(
+            left: _seekFeedbackPos!.dx - 30,
+            top: _seekFeedbackPos!.dy - 30,
+            child: IgnorePointer(
+              child: Container(
+                width: 60,
+                height: 60,
+                decoration: const BoxDecoration(
+                  color: Colors.black45,
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(
+                  _seekFeedbackIcon,
+                  color: Colors.white,
+                  size: 32,
                 ),
               ),
             ),
@@ -921,3 +1004,8 @@ class _SheetHint extends StatelessWidget {
     );
   }
 }
+
+/// Horizontal third of the video surface a tap landed on. The double-tap
+/// seek gesture maps [SeekZone.left] to rewind and [SeekZone.right] to
+/// forward; the middle third does nothing.
+enum SeekZone { left, middle, right }

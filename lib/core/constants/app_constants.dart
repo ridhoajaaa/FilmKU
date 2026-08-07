@@ -8,7 +8,7 @@ class AppConstants {
   /// App version shown in Settings → About. Keep in sync with `version:` in
   /// pubspec.yaml (bump BOTH on every update so users can tell which build
   /// they have installed).
-  static const String appVersion = '1.3.27';
+  static const String appVersion = '1.3.28';
 
   /// TMDB API key. There is deliberately NO embedded default — you must
   /// provide your own key, either:

@@ -81,6 +81,33 @@ void main() {
     });
   });
 
+  group('double-tap seek zones', () {
+    test('gesture step is 10 seconds', () {
+      expect(MpvControlsOverlay.gestureSeekStep, const Duration(seconds: 10));
+    });
+
+    test('left third of the screen rewinds', () {
+      expect(MpvControlsOverlay.seekZoneFor(100, 900), SeekZone.left);
+      expect(MpvControlsOverlay.seekZoneFor(299, 900), SeekZone.left);
+    });
+
+    test('middle third is a no-op zone', () {
+      expect(MpvControlsOverlay.seekZoneFor(450, 900), SeekZone.middle);
+      expect(MpvControlsOverlay.seekZoneFor(300, 900), SeekZone.middle);
+    });
+
+    test('right third of the screen forwards', () {
+      expect(MpvControlsOverlay.seekZoneFor(601, 900), SeekZone.right);
+      expect(MpvControlsOverlay.seekZoneFor(800, 900), SeekZone.right);
+      expect(MpvControlsOverlay.seekZoneFor(900, 900), SeekZone.right);
+    });
+
+    test('degenerate width maps to middle', () {
+      expect(MpvControlsOverlay.seekZoneFor(0, 0), SeekZone.middle);
+      expect(MpvControlsOverlay.seekZoneFor(5, -1), SeekZone.middle);
+    });
+  });
+
   group('settings presets', () {
     test('speed options are ordered and include 1.0x', () {
       const speeds = MpvControlsOverlay.speedOptions;

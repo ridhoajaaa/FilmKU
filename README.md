@@ -419,6 +419,18 @@ flutter doctor   # Android toolchain should be green
 
 ## 📝 Changelog
 
+### `2026-08-07` — v1.3.28: double-tap sisi layar untuk ±10 detik
+
+- **Double-tap untuk seek cepat (gaya YouTube)**: ketuk dua kali di sisi
+  KIRI layar = mundur 10 detik, sisi KANAN = maju 10 detik. Sepertiga
+  tengah layar tetap no-op (tidak mengganggu tap-tunggal toggle kontrol).
+- **Feedback visual**: ikon lingkaran transien (`replay_10`/`forward_10`)
+  muncul tepat di titik ketukan selama ~0.5s — bukan kontrol, tidak
+  menangkap tap.
+- **Helper pure** `MpvControlsOverlay.seekZoneFor(x, width)` +
+  `gestureSeekStep` (10s) di-expose untuk test (+5 unit test).
+
+
 ### `2026-08-07` — v1.3.27: mundur/maju 5 detik di player
 
 - **Tombol ±5s di bottom bar player** (semua platform: iOS + Android).
