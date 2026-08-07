@@ -414,11 +414,21 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
     // the Detail screen ever loading (2026-08 iOS: blank covers).
     final posterPath = await _moviePosterPath();
     if (!mounted) return;
+    // Title + year: ALSO awaited (bounded). _movieTitle/_movieYear read the
+    // Riverpod state SYNCHRONOUSLY — playing straight from Home pushes this
+    // player before movieDetailsProvider finishes loading, so the sync read
+    // returned "Now Playing"/null and SubtitleCat searched "Now Playing" →
+    // no subtitles on iOS (2026-08: same root cause as the blank poster
+    // fix, but for the external-subtitle lookup). Awaiting the future gives
+    // the fetch the REAL title+year so SubtitleCat finds Indonesian subs.
+    final title = await _movieTitleAsync();
+    final year = await _movieYearAsync();
+    if (!mounted) return;
     final failed = await context.push<bool>(
       '/mpv-player',
       extra: MpvPlayerArgs(
         url: stream.url,
-        title: _movieTitle(),
+        title: title,
         sourceLabel: source.label,
         startAt: startAt,
         // WebView-handoff streams may carry the browser session (Cookie)
@@ -436,7 +446,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
         // WITHOUT a TMDB API key (2026-08: keyless iOS builds showed no
         // subtitles because the old path needed TMDB for every lookup).
         tmdbId: widget.movieId,
-        movieYear: _movieYear(),
+        movieYear: year,
         // Poster for the continue-watching entry (Home "Lanjutkan menonton").
         posterPath: posterPath,
       ),
@@ -617,6 +627,23 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
     return _movieTitleFrom(details);
   }
 
+  /// Title of the movie, awaited with a bounded timeout so the mpv player
+  /// gets the REAL title even when the play started before the Detail screen
+  /// loaded (see [_moviePosterPath] — same 2026-08 root cause; a "Now
+  /// Playing" title made the external SubtitleCat subtitle search fail).
+  Future<String> _movieTitleAsync() async {
+    final details = ref.read(movieDetailsProvider(widget.movieId));
+    if (details is AsyncData) return _movieTitleFrom(details);
+    try {
+      final loaded = await ref
+          .read(movieDetailsProvider(widget.movieId).future)
+          .timeout(const Duration(seconds: 5));
+      return _movieTitleFrom(AsyncData(loaded));
+    } catch (_) {
+      return _movieTitle();
+    }
+  }
+
   /// Poster path of the movie — stored with the watch-progress entry so the
   /// Home "Lanjutkan menonton" row can render it.
   ///
@@ -649,6 +676,25 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
       if (date != null && date.length >= 4) return date.substring(0, 4);
     }
     return null;
+  }
+
+  /// Release year, awaited with a bounded timeout (same rationale as
+  /// [_movieTitleAsync]: a sync read right after playing from Home returns
+  /// null, and SubtitleCat's title+year search needs the year to hit the
+  /// right release).
+  Future<String?> _movieYearAsync() async {
+    final details = ref.read(movieDetailsProvider(widget.movieId));
+    if (details is AsyncData) return _movieYear();
+    try {
+      final loaded = await ref
+          .read(movieDetailsProvider(widget.movieId).future)
+          .timeout(const Duration(seconds: 5));
+      final date = loaded.movie.releaseDate;
+      if (date != null && date.length >= 4) return date.substring(0, 4);
+      return null;
+    } catch (_) {
+      return _movieYear();
+    }
   }
 
   @override

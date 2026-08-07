@@ -405,6 +405,30 @@ flutter doctor   # Android toolchain should be green
 
 ## 📝 Changelog
 
+### `2026-08-08` — v1.3.39: Home capsule floats over content again + subtitles get the real title/year
+
+- **iOS Home capsule floats over the cards again (pixel-verified geometry).**
+  The floating glass capsule on Home sat over a SOLID BLACK band while
+  Settings/Search floated over content. Root cause: Home wrapped its scroll
+  in a full `SafeArea` — the home-indicator inset was added ON TOP of the
+  ListView's 110px bottom padding, so the last content row ended ~110px
+  ABOVE the capsule (probe: content bottom 630 vs capsule top 740) — the
+  glass had only black behind it. Search/Settings have no SafeArea wrapper,
+  so their content flowed right up to the capsule (bottom 734 vs top 740).
+  Home now uses `SafeArea(bottom: false)` — only the status bar is inset,
+  the bottom flows under the capsule exactly like Search/Settings. The
+  golden-geometry test now uses the REAL Home layout contract so a
+  regression can't sneak back in.
+- **External subtitles now get the movie's REAL title + year.** When a play
+  started straight from Home (no Detail screen first), `movieDetailsProvider`
+  was still loading — the sync reads returned `"Now Playing"`/`null`, so
+  SubtitleCat searched "Now Playing" and found nothing → "no subtitles" on
+  iOS even though Indonesian subs exist (same root cause as the blank
+  continue-watching covers, fixed for the poster but not the title/year).
+  The mpv player now awaits the details with a bounded 5s timeout (like the
+  poster fix) so SubtitleCat gets e.g. "Supergirl 1984" instead of "Now
+  Playing".
+
 ### `2026-08-08` — v1.3.38: Home cards identical to Search + subtitle fetch never skipped
 
 - **iOS Home cards now pixel-match the Search tab grid.** Same MovieCard
@@ -502,8 +526,9 @@ Semua tab sekarang konsisten mengambang bebas.
 <!-- VERSION-TOC:start -->
 
 <details>
-<summary>📜 Riwayat versi (53)</summary>
+<summary>📜 Riwayat versi (54)</summary>
 
+- [`v1.3.39`](#2026-08-08--v1339-home-capsule-floats-over-content-again--subtitles-get-the-real-titleyear)
 - [`v1.3.38`](#2026-08-08--v1338-home-cards-identical-to-search--subtitle-fetch-never-skipped)
 - [`v1.3.37`](#2026-08-08--v1337-subtitles-finally-appear-again-parallel-yify--subtitlecat)
 - [`v1.3.36`](#2026-08-08--v1336-cards-finally-read-centered-continue-watching-covers-fixed)

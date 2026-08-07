@@ -109,8 +109,14 @@ void main() {
   });
 }
 
-/// A tall scrollable stub with the same iOS bottom-padding contract as the
-/// real tab screens (110px clears the floating capsule).
+/// A tall scrollable stub with the SAME iOS layout contract as the REAL
+/// Home screen: SafeArea(bottom:false) (only the status bar is inset — the
+/// bottom must flow under the floating capsule exactly like Search/Settings)
+/// + ListView with 110px bottom padding clearing the capsule. Pixel-verified
+/// 2026-08: the old full SafeArea added the home-indicator inset ON TOP of
+/// the 110px padding, so the last row ended ~110px above the capsule and the
+/// capsule floated over a solid black band on Home while Search/Settings
+/// floated over content.
 class _ScrollableStub extends StatelessWidget {
   const _ScrollableStub({required this.label});
 
@@ -119,7 +125,7 @@ class _ScrollableStub extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isIos = Theme.of(context).platform == TargetPlatform.iOS;
-    return ListView(
+    final list = ListView(
       padding: EdgeInsets.only(bottom: isIos ? 110 : 0),
       children: [
         for (var i = 0; i < 40; i++)
@@ -139,6 +145,10 @@ class _ScrollableStub extends StatelessWidget {
           child: SizedBox(key: Key('stub_last_item')),
         ),
       ],
+    );
+    return SafeArea(
+      bottom: !isIos,
+      child: list,
     );
   }
 }

@@ -34,6 +34,15 @@ class HomeScreen extends ConsumerWidget {
 
     return Scaffold(
       body: SafeArea(
+        // iOS: bottom:false (2026-08 v1.3.39, pixel-verified). The FULL
+        // SafeArea (top+bottom) added the home-indicator inset ON TOP of the
+        // ListView's own 110px bottom padding, so the last content row ended
+        // ~110px ABOVE the floating glass capsule — the capsule floated over
+        // a solid black band on Home while Search/Settings (no SafeArea
+        // wrapper) floated directly over content. The capsule handles its own
+        // bottom safe-area margin, so only the TOP (status bar) inset belongs
+        // here. Android unchanged.
+        bottom: Theme.of(context).platform != TargetPlatform.iOS,
         child: RefreshIndicator(
           onRefresh: () => Future.wait([
             ref.refresh(trendingMoviesProvider.future),
