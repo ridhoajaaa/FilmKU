@@ -4,6 +4,7 @@ import '../../../../core/network/api_client.dart';
 import '../../data/datasources/stream_source_datasource.dart';
 import '../../data/datasources/tmdb_remote_datasource.dart';
 import '../../data/repositories/movie_repository_impl.dart';
+import '../../domain/entities/genre.dart';
 import '../../domain/entities/movie.dart';
 import '../../domain/entities/movie_details.dart';
 import '../../domain/entities/video_source.dart';
@@ -60,6 +61,18 @@ final movieDetailsProvider =
 final similarMoviesProvider =
     FutureProvider.family<List<Movie>, int>((ref, id) {
   return ref.watch(movieRepositoryProvider).getSimilarMovies(id);
+});
+
+// ---------------------------------------------------------------------------
+// Genre browsing
+// ---------------------------------------------------------------------------
+
+final genresProvider = FutureProvider<List<Genre>>(
+  (ref) => ref.watch(movieRepositoryProvider).getGenres(),
+);
+
+final genreMoviesProvider = FutureProvider.family<List<Movie>, int>((ref, id) {
+  return ref.watch(movieRepositoryProvider).getMoviesByGenre(id);
 });
 
 final videoSourcesProvider =

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../../../../core/constants/api_constants.dart';
 import '../../../../core/theme/app_colors.dart';
@@ -40,6 +41,7 @@ class DetailScreen extends ConsumerWidget {
           onPlay: () => context.push('/player/$movieId'),
           onToggleWatchlist: () =>
               ref.read(watchlistProvider.notifier).toggle(data.movie),
+          onShare: () => shareMovieToFriends(context, data.movie),
         ),
       ),
     );
@@ -53,6 +55,7 @@ class _DetailContent extends ConsumerWidget {
     required this.isSaved,
     required this.onPlay,
     required this.onToggleWatchlist,
+    required this.onShare,
   });
 
   final MovieDetails details;
@@ -60,6 +63,7 @@ class _DetailContent extends ConsumerWidget {
   final bool isSaved;
   final VoidCallback onPlay;
   final VoidCallback onToggleWatchlist;
+  final VoidCallback onShare;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -123,6 +127,7 @@ class _DetailContent extends ConsumerWidget {
                       isSaved: isSaved,
                       onPlay: onPlay,
                       onToggleWatchlist: onToggleWatchlist,
+                      onShare: onShare,
                     ),
                   )
                 : _InfoColumn(
@@ -130,6 +135,7 @@ class _DetailContent extends ConsumerWidget {
                     isSaved: isSaved,
                     onPlay: onPlay,
                     onToggleWatchlist: onToggleWatchlist,
+                    onShare: onShare,
                   ),
           ),
         ),
@@ -143,13 +149,17 @@ class _DetailContent extends ConsumerWidget {
               child: _CastSection(cast: details.cast),
             ),
           ),
-        SliverToBoxAdapter(
-          child: MovieListRow(
-            title: 'Similar Movies',
-            moviesAsync: similar,
-            onRetry: () => ref.invalidate(similarMoviesProvider(movie.id)),
+        // Similar movies — hidden entirely when the API returned none (no
+        // empty "Similar Movies" header on niche films). Loading/error states
+        // keep the row so its spinner/Retry stay visible.
+        if (!(similar.hasValue && similar.value!.isEmpty))
+          SliverToBoxAdapter(
+            child: MovieListRow(
+              title: 'Similar Movies',
+              moviesAsync: similar,
+              onRetry: () => ref.invalidate(similarMoviesProvider(movie.id)),
+            ),
           ),
-        ),
         const SliverToBoxAdapter(child: SizedBox(height: 24)),
       ],
     );
@@ -166,12 +176,14 @@ class _InfoColumn extends StatelessWidget {
     required this.isSaved,
     required this.onPlay,
     required this.onToggleWatchlist,
+    required this.onShare,
   });
 
   final MovieDetails details;
   final bool isSaved;
   final VoidCallback onPlay;
   final VoidCallback onToggleWatchlist;
+  final VoidCallback onShare;
 
   @override
   Widget build(BuildContext context) {
@@ -185,6 +197,7 @@ class _InfoColumn extends StatelessWidget {
           isSaved: isSaved,
           onPlay: onPlay,
           onToggleWatchlist: onToggleWatchlist,
+          onShare: onShare,
         ),
         if ((details.genres).isNotEmpty) ...[
           const SizedBox(height: 18),
@@ -327,11 +340,13 @@ class _ActionRow extends StatelessWidget {
     required this.isSaved,
     required this.onPlay,
     required this.onToggleWatchlist,
+    required this.onShare,
   });
 
   final bool isSaved;
   final VoidCallback onPlay;
   final VoidCallback onToggleWatchlist;
+  final VoidCallback onShare;
 
   @override
   Widget build(BuildContext context) {
@@ -350,7 +365,7 @@ class _ActionRow extends StatelessWidget {
             ),
           ),
         ),
-        const SizedBox(width: 12),
+        const SizedBox(width: 10),
         Expanded(
           child: OutlinedButton.icon(
             onPressed: onToggleWatchlist,
@@ -364,6 +379,20 @@ class _ActionRow extends StatelessWidget {
               side: const BorderSide(color: AppColors.surfaceLight),
               padding: const EdgeInsets.symmetric(vertical: 14),
             ),
+          ),
+        ),
+        const SizedBox(width: 10),
+        // Share the movie (title + TMDB link) to WhatsApp / any app.
+        SizedBox(
+          width: 54,
+          child: OutlinedButton(
+            onPressed: onShare,
+            style: OutlinedButton.styleFrom(
+              foregroundColor: AppColors.textPrimary,
+              side: const BorderSide(color: AppColors.surfaceLight),
+              padding: EdgeInsets.zero,
+            ),
+            child: const Icon(Icons.share_rounded, size: 20),
           ),
         ),
       ],
@@ -489,4 +518,15 @@ class _CastRow extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Shares a movie (title + TMDB link) via the system share sheet — the
+/// "Share film ke teman" feature (2026-08): friends receive the title and a
+/// link they can open, no ads, no account needed.
+Future<void> shareMovieToFriends(BuildContext context, Movie movie) async {
+  final text = 'Nonton yuk: ${movie.title} di FilmKU 🍿\n'
+      'https://www.themoviedb.org/movie/${movie.id}';
+  await SharePlus.instance.share(
+    ShareParams(text: text, subject: '${movie.title} — FilmKU'),
+  );
 }

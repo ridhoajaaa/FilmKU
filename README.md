@@ -419,6 +419,30 @@ flutter doctor   # Android toolchain should be green
 
 ## 📝 Changelog
 
+### `2026-08-07` — v1.3.32: WebView dihapus total + 5 fitur baru + resume benar-benar jalan
+
+- **WebView fallback dihapus (permintaan user):** WebView visible kadang
+  mengambil alih mpv padahal film sudah jalan, dan selalu me-restart film
+  yang di-resume dari 0. Sekarang: ekstraksi langsung / hidden auto-capture
+  -> mpv saja. Jika mpv gagal -> ErrorView + Retry (tidak ada lagi tombol
+  "Play in WebView", route /webview-player + WebViewPlayerScreen dihapus).
+  Hidden auto-capture (tidak terlihat, "Sumber 1/2 -> mpv") tetap.
+- **Continue-watching resume di-fix akar masalahnya:** kartu "Lanjutkan
+  menonton" kini push `/player/:id?resume=1`; posisi tersimpan dipakai di
+  SEMUA jalur play (direct + auto-capture), dan seek mpv di-hardening
+  (open-paused -> seek -> play, mencegah race autoplay-seek yang bikin
+  resume ter-drop). Diagnostik: FILMKU_PLAYER_RESUME_LOOKUP + FILMKU_MPV_SEEKED.
+- **5 fitur baru (app-wide):**
+  1. Riwayat tontonan lengkap (halaman /history, tercatat saat film benar2
+     diputar, cap 200, ada tombol hapus; link di Home).
+  2. Jelajah per Genre (chips di Home -> grid film per genre + tombol acak).
+  3. Share film ke teman (tombol di Detail: judul + link TMDB).
+  4. Filter & urut pencarian (sort: Populer/Rating/Terbaru/A-Z + chip genre).
+  5. Baris "Similar Movies" disembunyikan saat kosong (tidak ada header
+     kosong lagi di film niche).
+- Tests: 245/245 pass, analyze bersih. webview_fallback_test ditulis ulang
+  (hanya group yang masih hidup), +player_resume/search_sort/watch_history.
+
 ### `2026-08-07` — v1.3.31: Continue-watching resumes on EVERY playback path
 
 - **Bug fix (root cause):** replaying a movie from the Home "Lanjutkan

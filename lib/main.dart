@@ -7,6 +7,7 @@ import 'package:media_kit/media_kit.dart';
 
 import 'app.dart';
 import 'core/local/settings_service.dart';
+import 'core/local/watch_history_service.dart';
 import 'core/local/watch_progress_service.dart';
 import 'features/movies/data/local/watchlist_service.dart';
 
@@ -41,6 +42,7 @@ Future<void> main() async {
   await SettingsService.init();
   await WatchlistService.init();
   await WatchProgressService.init();
+  await WatchHistoryService.init();
 
   runApp(
     LiquidGlassWidgets.wrap(

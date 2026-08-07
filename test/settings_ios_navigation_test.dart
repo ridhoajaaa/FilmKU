@@ -7,6 +7,7 @@ import 'package:hive_flutter/hive_flutter.dart';
 
 import 'package:filmku/app.dart';
 import 'package:filmku/core/local/settings_service.dart';
+import 'package:filmku/core/local/watch_history_service.dart';
 import 'package:filmku/core/local/watch_progress_service.dart';
 import 'package:filmku/features/movies/data/local/watchlist_service.dart';
 import 'package:filmku/features/movies/presentation/screens/settings_screen.dart';
@@ -25,6 +26,7 @@ void main() {
     await SettingsService.init();
     await WatchlistService.init();
     await WatchProgressService.init();
+    await WatchHistoryService.init();
   });
 
   tearDownAll(() async {

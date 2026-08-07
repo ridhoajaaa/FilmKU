@@ -1,3 +1,4 @@
+import '../../domain/entities/genre.dart';
 import '../../domain/entities/movie.dart';
 import '../../domain/entities/movie_details.dart';
 import '../../domain/entities/video_source.dart';
@@ -50,6 +51,13 @@ class MovieRepositoryImpl implements MovieRepository {
   @override
   Future<List<Movie>> getSimilarMovies(int id) async =>
       _toMovies(await _tmdb.getSimilarMovies(id));
+
+  @override
+  Future<List<Genre>> getGenres() => _tmdb.getGenres();
+
+  @override
+  Future<List<Movie>> getMoviesByGenre(int genreId) async =>
+      _toMovies(await _tmdb.getMoviesByGenre(genreId));
 
   @override
   Future<List<VideoSource>> getVideoSources(int id) =>

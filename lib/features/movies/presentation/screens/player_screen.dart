@@ -13,30 +13,27 @@ import '../../data/datasources/stream_source_datasource.dart';
 import '../../domain/entities/movie_details.dart';
 import '../../domain/entities/video_source.dart';
 import '../providers/movie_providers.dart';
+import '../providers/watch_history_provider.dart';
 import '../widgets/error_view.dart';
 import '../widgets/hidden_stream_capture.dart';
+import '../widgets/stream_capture_core.dart';
 import 'mpv_player_screen.dart';
-import 'webview_player_screen.dart';
 
 /// Native, ad-free video player. Extracts direct stream links via the
 /// SourceAggregator and plays them with the libmpv native player
 /// (`media_kit`) — no ads render.
 class PlayerScreen extends ConsumerStatefulWidget {
-  const PlayerScreen({super.key, required this.movieId});
+  const PlayerScreen({super.key, required this.movieId, this.resume = false});
 
   final int movieId;
 
-  /// Picks which source's embed page to open in the WebView fallback:
-  /// prefers the source that was actually attempted (it failed natively),
-  /// falling back to any source that has an embed page. Exposed for tests.
-  @visibleForTesting
-  static VideoSource? selectFallbackSource(
-    VideoSource? selected,
-    List<VideoSource> sources,
-  ) {
-    if (selected?.embedUrl != null) return selected;
-    return sources.where((s) => s.embedUrl != null).firstOrNull;
-  }
+  /// True when this play was started from the Home "Lanjutkan menonton" row —
+  /// the player MUST resume from the saved continue-watching position on
+  /// EVERY path (direct extraction AND hidden auto-capture), instead of only
+  /// when the stream happens to carry a position (2026-08: replaying from
+  /// Home always restarted at 0 because the visible WebView fallback started
+  /// fresh — the fallback is gone, so the flag is the single resume gate).
+  final bool resume;
 
   /// Builds the ordered list of provider embed pages to try during hidden
   /// auto-capture: every enabled provider that can produce an embed page for
@@ -64,21 +61,6 @@ class PlayerScreen extends ConsumerStatefulWidget {
     return candidates;
   }
 
-  /// Builds a last-resort WebView fallback for [movieId] when extraction found
-  /// ZERO sources at all (e.g. on-device headless failures): the first enabled
-  /// provider's embed page is opened in the in-app WebView, whose real browser
-  /// context may still play the stream. Without this, the "Play in WebView"
-  /// button is hidden exactly when it is most needed. Exposed for tests.
-  @visibleForTesting
-  static VideoSource? buildFallbackWebViewSource(
-    int movieId, {
-    bool Function(String sourceId)? isSourceEnabled,
-  }) {
-    final candidates =
-        buildAutoCaptureCandidates(movieId, isSourceEnabled: isSourceEnabled);
-    return candidates.isEmpty ? null : candidates.first;
-  }
-
   /// The next provider index to try after [current] times out, or null when
   /// every candidate has been tried (auto-capture then falls back to the
   /// manual WebView). Exposed for tests.
@@ -87,20 +69,6 @@ class PlayerScreen extends ConsumerStatefulWidget {
     final next = current + 1;
     return next < length ? next : null;
   }
-
-  /// Whether the WebView fallback opened after an mpv failure should have
-  /// auto-handoff re-armed so it can hand a WORKING captured URL back to the
-  /// native player.
-  ///
-  /// 2026-08 on-device evidence: the direct-extraction URL often loads forever
-  /// in mpv (the signed CDN URL needs the WebView's session), yet the URL the
-  /// WebView actually plays DOES play in mpv. So the FIRST mpv failure re-arms
-  /// auto-handoff — the WebView captures the working URL and playback
-  /// continues natively after all. A SECOND failure disables it so the user
-  /// stays in the WebView instead of an infinite mpv ↔ WebView bounce.
-  /// Exposed for tests.
-  @visibleForTesting
-  static bool shouldReArmAutoHandoff(int mpvFailCount) => mpvFailCount == 1;
 
   /// Maximum number of providers the hidden auto-capture tries before giving
   /// up and auto-opening the visible WebView.
@@ -176,14 +144,13 @@ class PlayerScreen extends ConsumerStatefulWidget {
 
   /// Resolves where a stream handed to the mpv player should start.
   ///
-  /// The incoming [streamPosition] wins when it is non-zero (a WebView
-  /// handoff that was already playing carries its real position). Otherwise
-  /// the saved continue-watching [savedPosition] is used — so replaying a
-  /// movie from the Home "Lanjutkan menonton" row resumes even when the
-  /// stream came from hidden auto-capture or a WebView handoff (both start
-  /// at zero; the OLD code only resumed on the direct-extraction path, so
-  /// auto-capture/WebView movies always restarted from 0 — 2026-08 report).
-  /// Exposed for tests.
+  /// The incoming [streamPosition] wins when it is non-zero (a stream that
+  /// already carried a real position keeps it). Otherwise the saved
+  /// continue-watching [savedPosition] is used — so replaying a movie from
+  /// the Home "Lanjutkan menonton" row resumes even when the stream came
+  /// from hidden auto-capture (which starts at zero; the OLD code only
+  /// resumed on the direct-extraction path, so auto-capture movies always
+  /// restarted from 0 — 2026-08 report). Exposed for tests.
   @visibleForTesting
   static Duration resolveStartPosition({
     required Duration streamPosition,
@@ -221,8 +188,6 @@ class PlayerScreen extends ConsumerStatefulWidget {
 }
 
 class _PlayerScreenState extends ConsumerState<PlayerScreen> {
-  VideoSource? _selected;
-  List<VideoSource> _sources = const <VideoSource>[];
   bool _loading = true;
   String? _error;
 
@@ -244,14 +209,6 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
     if (_autoCaptureIndex >= _autoCaptureCandidates.length) return null;
     return _autoCaptureCandidates[_autoCaptureIndex];
   }
-
-  /// How many times mpv has failed THIS movie session. The FIRST mpv startup
-  /// failure auto-failovers to the visible WebView with auto-handoff RE-ARMED
-  /// (the WebView captures the REAL playable URL — which is proven to play in
-  /// mpv — and hands it back to the native player). Only a SECOND failure
-  /// disables auto-handoff so the user stays in the WebView instead of an
-  /// infinite mpv ↔ WebView bounce.
-  int _mpvFailCount = 0;
 
   @override
   void initState() {
@@ -293,8 +250,6 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
     setState(() {
       _loading = true;
       _error = null;
-      // A fresh load = a fresh playback session (Retry after a failure).
-      _mpvFailCount = 0;
     });
     try {
       final sources =
@@ -306,7 +261,6 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
       // [reviveRelaySources]).
       final revived = await PlayerScreen.reviveRelaySources(sources);
       if (!mounted) return;
-      setState(() => _sources = revived);
 
       final playable = revived.where((s) => s.isPlayable).toList();
       // TEMP-DIAG: on-device extraction yields zero playable streams
@@ -362,7 +316,6 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
     final url = source.videoUrl;
     if (url == null) {
       setState(() {
-        _selected = source;
         _loading = false;
         _error = '${source.label} has no direct stream.';
       });
@@ -370,7 +323,6 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
     }
 
     setState(() {
-      _selected = source;
       _loading = true;
       _error = null;
     });
@@ -379,100 +331,39 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
     await _playInMpv(
       // Position resolved centrally in [_playInMpv] (stream position wins,
       // saved continue-watching position is the fallback) so EVERY entry
-      // path — direct extraction, hidden auto-capture, WebView handoff —
-      // resumes identically.
+      // path — direct extraction, hidden auto-capture — resumes identically.
       WebViewNativeStream(url: url, position: Duration.zero),
       source,
     );
   }
 
-  /// Opens the selected source's embed page in the in-app WebView fallback
-  /// player — used when auto-capture times out, the user picks it manually,
-  /// or the native (mpv) player cannot play the handed-off stream.
-  ///
-  /// When the embed player exposes a direct stream URL (its `<video>` is
-  /// polling plain http(s) media, not MSE `blob:`), the WebView pops with a
-  /// [WebViewNativeStream] and playback continues in the libmpv native
-  /// player (`/mpv-player`) at the same position. If mpv fails too, we pop
-  /// straight back into the WebView so the movie keeps playing — with
-  /// [autoHandoff] disabled so the WebView doesn't immediately bounce back
-  /// into the failing native player (loop).
-  Future<void> _openWebViewFallback(
-    VideoSource source, {
-    bool autoHandoff = true,
-  }) async {
-    final embedUrl = source.embedUrl;
-    if (embedUrl == null) return;
-    final stream = await context.push<WebViewNativeStream>(
-      '/webview-player',
-      extra: WebViewPlayerArgs(
-        url: embedUrl,
-        sourceLabel: source.label,
-        autoHandoff: autoHandoff,
-      ),
-    );
-    if (!mounted || stream == null) {
-      // The WebView popped without a handoff — either the user closed it or
-      // the source served a BLANK page (about:blank → white screen, detected
-      // by the WebView). Auto-failover to the next provider in the capped
-      // list instead of landing on the error screen; only when every
-      // provider has been tried do we surface the error view.
-      final next = PlayerScreen.nextAutoCaptureIndex(
-        _autoCaptureIndex,
-        _autoCaptureCandidates.length,
-      );
-      if (next != null) {
-        final nextSource = _autoCaptureCandidates[next];
-        if (nextSource.embedUrl != null) {
-          debugPrint(
-            'FILMKU_WEBVIEW_BLANK_FAILOVER '
-            '${_autoCaptureCandidates[_autoCaptureIndex].sourceId} -> '
-            '${nextSource.sourceId}',
-          );
-          setState(() => _autoCaptureIndex = next);
-          _openWebViewFallback(nextSource);
-          return;
-        }
-      }
-      if (mounted) {
-        setState(() {
-          _loading = false;
-          _error = 'No playable stream found for this movie.\n'
-              'Try again or enable more sources in Settings.';
-        });
-      }
-      return;
-    }
-    debugPrint(
-      'FILMKU_WEBVIEW_HANDOFF source=${source.sourceId} '
-      'url=${stream.url} position=${stream.position}',
-    );
-    await _playInMpv(stream, source);
-  }
-
-  /// Plays a handed-off/auto-captured direct stream in the libmpv native
-  /// player. Pops the whole player on a normal close; on failure returns to
-  /// the visible WebView so the movie keeps playing.
+  /// Plays a direct extraction / auto-captured stream in the libmpv native
+  /// player. Pops the whole player on a normal close; on a FAILED playback
+  /// (the stream never started / stalled) shows the error UI with Retry —
+  /// there is NO visible WebView fallback anymore (2026-08: the WebView
+  /// sometimes took over a movie that was already playing fine in mpv, and
+  /// it always restarted a resumed movie from 0).
   Future<void> _playInMpv(
       WebViewNativeStream stream, VideoSource source) async {
-    // Continue-watching resume: the stream's own position wins (a WebView
-    // handoff that already played carries its real position); otherwise the
-    // SAVED position resumes the movie where the user left off. This is the
-    // single source of truth for every entry path — direct extraction,
-    // hidden auto-capture and WebView handoff all funnel through here, so a
-    // "Lanjutkan menonton" replay always resumes (2026-08: it restarted at
-    // 0 whenever the direct-extraction path wasn't used).
+    // Continue-watching resume: the stream's own position wins (a stream
+    // that already carried a real position keeps it); otherwise the SAVED
+    // position resumes the movie where the user left off — but only when
+    // this play was requested FROM the continue-watching row ([resume]); a
+    // fresh play from the Detail screen starts from the beginning.
+    final saved = widget.resume
+        ? WatchProgressService.instance.get(widget.movieId)?.position
+        : null;
     final startAt = PlayerScreen.resolveStartPosition(
       streamPosition: stream.position,
-      savedPosition:
-          WatchProgressService.instance.get(widget.movieId)?.position,
+      savedPosition: saved,
     );
-    if (startAt > Duration.zero) {
-      debugPrint(
-        'FILMKU_PLAYER_RESUME movieId=${widget.movieId} '
-        'at=${startAt.inMilliseconds}ms source=${source.sourceId}',
-      );
-    }
+    debugPrint(
+      'FILMKU_PLAYER_RESUME_LOOKUP movieId=${widget.movieId} '
+      'resumeRequested=${widget.resume} '
+      'saved=${saved?.inMilliseconds ?? -1}ms '
+      'streamPos=${stream.position.inMilliseconds}ms '
+      '-> startAt=${startAt.inMilliseconds}ms source=${source.sourceId}',
+    );
     final failed = await context.push<bool>(
       '/mpv-player',
       extra: MpvPlayerArgs(
@@ -501,24 +392,28 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
       ),
     );
     if (!mounted) return;
+    // The mpv screen records the play in the full watch history on its first
+    // real frame — refresh the provider so the Home "Riwayat tontonan" count
+    // and the HistoryScreen list update right away (2026-08: without this the
+    // provider snapshot stayed stale until an app restart).
+    ref.read(watchHistoryProvider.notifier).refresh();
     if (failed == true) {
-      // Native playback failed — return to the WebView seamlessly.
-      //
-      // FIRST failure: auto-handoff stays ENABLED. On-device evidence
-      // (2026-08, iOS): the direct-extraction URL often loads forever in mpv
-      // (the signed CDN URL needs the WebView's session), yet the URL the
-      // WebView actually plays DOES play in mpv. Re-arming auto-handoff here
-      // lets the WebView capture that working URL and hand it back to the
-      // native player — the movie ends up playing in mpv after all.
-      // SECOND failure: auto-handoff DISABLED so the user stays in the
-      // WebView instead of an infinite mpv ↔ WebView bounce.
-      _mpvFailCount++;
-      final autoHandoff = PlayerScreen.shouldReArmAutoHandoff(_mpvFailCount);
+      // Native playback failed — no WebView fallback anymore (2026-08).
+      // Surface the error with Retry; a retry re-runs extraction and may
+      // resolve a fresher URL for this movie.
       debugPrint(
-        'FILMKU_MPV_FAILED_RETURN_WEBVIEW source=${source.sourceId} '
-        'failCount=$_mpvFailCount autoHandoff=$autoHandoff',
+        'FILMKU_MPV_FAILED_ERROR_UI source=${source.sourceId}',
       );
-      await _openWebViewFallback(source, autoHandoff: autoHandoff);
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _autoCapturing = false;
+          _autoCaptureCandidates = const <VideoSource>[];
+          _autoCaptureIndex = 0;
+          _error = 'Native playback failed for ${source.label}.\n'
+              'Try again or enable more sources in Settings.';
+        });
+      }
     } else {
       // The user finished/closed the native playback — leave the player
       // instead of lingering on the stale "no playable stream" error screen.
@@ -535,11 +430,6 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   /// native (libmpv) player — the user never sees a WebView or its ads.
   Future<void> _beginAutoCapture() async {
     var candidates = PlayerScreen.buildAutoCaptureCandidates(widget.movieId);
-    if (candidates.isEmpty) {
-      final fromExtraction =
-          PlayerScreen.selectFallbackSource(_selected, _sources);
-      if (fromExtraction != null) candidates = [fromExtraction];
-    }
     if (!mounted) return;
     if (candidates.isEmpty) {
       setState(() {
@@ -606,26 +496,9 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
       return;
     }
     debugPrint('FILMKU_AUTOCAPTURE_TIMEOUT all providers exhausted');
-    // Auto-open the visible WebView for the BEST-ranked provider (registry
-    // order = reliability order, so the FIRST candidate is the one most
-    // likely to actually play on-device — e.g. VidLink, which is proven).
-    // Hidden-capture failure does NOT predict visible-WebView failure: the
-    // hidden capture never succeeds on this ISP, yet the visible WebView →
-    // mpv auto-handoff does. Opening the LAST-tried provider would surface a
-    // dead/blank source (e.g. 2embed.cc → about:blank white screen).
-    //
-    // The candidates list is KEPT (index reset to 0) so that if this WebView
-    // pops without a stream (blank page / closed), _openWebViewFallback can
-    // auto-failover to the next provider instead of the error screen.
-    final bestSource =
-        _autoCaptureCandidates.isEmpty ? null : _autoCaptureCandidates.first;
-    setState(() {
-      _autoCapturing = false;
-      _autoCaptureIndex = 0;
-    });
-    if (bestSource?.embedUrl != null) {
-      _openWebViewFallback(bestSource!);
-    } else {
+    // No visible WebView fallback anymore (2026-08): surface the error with
+    // Retry, which re-runs extraction + auto-capture.
+    if (mounted) {
       setState(() {
         _autoCapturing = false;
         _autoCaptureCandidates = const <VideoSource>[];
@@ -635,13 +508,6 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
             'Try again or enable more sources in Settings.';
       });
     }
-  }
-
-  void _cancelAutoCaptureAndOpenWebView() {
-    final source = _autoCaptureSource;
-    if (!mounted) return;
-    setState(() => _autoCapturing = false);
-    if (source != null) _openWebViewFallback(source);
   }
 
   String _movieTitle() {
@@ -767,12 +633,6 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
                         fontSize: 12,
                       ),
                     ),
-                  const SizedBox(height: 8),
-                  if (embedUrl != null)
-                    TextButton(
-                      onPressed: _cancelAutoCaptureAndOpenWebView,
-                      child: const Text('Buka di WebView (manual)'),
-                    ),
                 ],
               ),
             ),
@@ -782,23 +642,13 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
     }
     // Error state — or the transient gap between mpv closing and the pop
     // (direct URLs route straight to the mpv player, so this screen only
-    // shows loading / auto-capture / error). When extraction found nothing
-    // at all (the common on-device case), still offer the WebView fallback
-    // using the first enabled provider's embed page — otherwise the escape
-    // hatch is hidden exactly when the user needs it most.
-    final fallbackSource =
-        PlayerScreen.selectFallbackSource(_selected, _sources) ??
-            PlayerScreen.buildFallbackWebViewSource(widget.movieId);
+    // shows loading / auto-capture / error). No WebView fallback anymore
+    // (2026-08): Retry re-runs extraction + hidden auto-capture.
     return ErrorView(
       message: _error ??
           'No playable stream found for this movie.\n'
               'Try again or enable more sources in Settings.',
       onRetry: _loadSources,
-      secondaryLabel: fallbackSource == null ? null : 'Play in WebView',
-      onSecondary: fallbackSource == null
-          ? null
-          : () => _openWebViewFallback(fallbackSource),
-      secondaryHint: fallbackSource == null ? null : 'May show source ads',
     );
   }
 

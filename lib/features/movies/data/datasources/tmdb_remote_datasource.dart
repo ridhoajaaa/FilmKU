@@ -1,6 +1,7 @@
 import '../../../../core/constants/api_constants.dart';
 import '../../../../core/network/api_client.dart';
 import '../../domain/entities/cast_member.dart';
+import '../../domain/entities/genre.dart';
 import '../models/cast_model.dart';
 import '../models/movie_details_model.dart';
 import '../models/movie_model.dart';
@@ -58,5 +59,28 @@ class TmdbRemoteDataSource {
 
   Future<List<MovieModel>> getSimilarMovies(int id) => _fetchMovies(
         '${ApiConstants.movieDetails}/$id${ApiConstants.similarMovies}',
+      );
+
+  /// All movie genres (TMDB `/genre/movie/list`).
+  Future<List<Genre>> getGenres() async {
+    final data = await _client.get('/genre/movie/list');
+    final genres = (data as Map<String, dynamic>)['genres'] as List<dynamic>?;
+    if (genres == null) return const <Genre>[];
+    return genres
+        .map((e) => Genre(
+              id: ((e as Map<String, dynamic>)['id'] as num).toInt(),
+              name: (e['name'] as String?) ?? '',
+            ))
+        .toList();
+  }
+
+  /// Popular movies of a single genre (TMDB `/discover/movie`).
+  Future<List<MovieModel>> getMoviesByGenre(int genreId) => _fetchMovies(
+        '/discover/movie',
+        query: {
+          'with_genres': genreId,
+          'sort_by': 'popularity.desc',
+          'include_adult': false,
+        },
       );
 }

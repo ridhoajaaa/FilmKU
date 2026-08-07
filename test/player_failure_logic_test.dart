@@ -1,13 +1,12 @@
 import 'package:filmku/features/movies/presentation/screens/mpv_player_screen.dart';
-import 'package:filmku/features/movies/presentation/screens/webview_player_screen.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 /// Regression tests for the 2026-08 iOS/Android fixes:
 /// 1. mpv must NOT surface its full-screen "Native playback failed" error UI
 ///    for transient errors while the video is genuinely playing (the old code
 ///    showed the error overlay ON TOP of a still-playing movie).
-/// 2. The WebView must offer "Tap to play" when the page shows a paused
-///    <video> (spinner-forever on iOS) instead of leaving the user stuck.
+/// 2. A never-started stream auto-fails-over to the backup path instead of
+///    parking the full error UI over a still-loading player.
 void main() {
   group('MpvPlayerScreen.shouldSurfaceFailure', () {
     test('surfaces failure when playback never started', () {
@@ -171,52 +170,6 @@ void main() {
       expect(
         MpvPlayerScreen.failoverNoticeDuration,
         lessThan(const Duration(seconds: 4)),
-      );
-    });
-  });
-
-  group('WebViewPlayerScreen.shouldShowTapToPlay', () {
-    test('paused video + no native stream + not yet tapped => show', () {
-      expect(
-        WebViewPlayerScreen.shouldShowTapToPlay(
-          paused: 1,
-          hasNativeStream: false,
-          tapAttempted: false,
-        ),
-        isTrue,
-      );
-    });
-
-    test('playing video (paused=0) => no tap prompt', () {
-      expect(
-        WebViewPlayerScreen.shouldShowTapToPlay(
-          paused: 0,
-          hasNativeStream: false,
-          tapAttempted: false,
-        ),
-        isFalse,
-      );
-    });
-
-    test('a discovered native stream suppresses the tap prompt', () {
-      expect(
-        WebViewPlayerScreen.shouldShowTapToPlay(
-          paused: 1,
-          hasNativeStream: true,
-          tapAttempted: false,
-        ),
-        isFalse,
-      );
-    });
-
-    test('after the user already tapped once, no re-prompt', () {
-      expect(
-        WebViewPlayerScreen.shouldShowTapToPlay(
-          paused: 1,
-          hasNativeStream: false,
-          tapAttempted: true,
-        ),
-        isFalse,
       );
     });
   });

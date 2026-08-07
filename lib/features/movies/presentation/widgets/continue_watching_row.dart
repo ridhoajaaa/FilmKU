@@ -156,7 +156,10 @@ class _ContinueCard extends StatelessWidget {
     );
     return GestureDetector(
       onTap: () async {
-        await context.push('/player/${entry.movieId}');
+        // ?resume=1 — the player resumes from this entry's saved position on
+        // every playback path (direct extraction AND hidden auto-capture),
+        // instead of starting from the beginning (2026-08 bug).
+        await context.push('/player/${entry.movieId}?resume=1');
         onResumed();
       },
       child: isIos

@@ -11,6 +11,7 @@ import 'package:screen_brightness/screen_brightness.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../../../../core/constants/api_constants.dart';
+import '../../../../core/local/watch_history_service.dart';
 import '../../../../core/local/watch_progress_service.dart';
 import '../../../../core/media/mini_player_service.dart';
 import '../../../../core/platform/orientation_changer.dart';
@@ -46,7 +47,7 @@ class MpvPlayerArgs {
   /// Human-readable provider name.
   final String sourceLabel;
 
-  /// Where the WebView playback was, to resume from.
+  /// Where the stream should resume from (continue-watching position).
   final Duration startAt;
 
   /// TMDB id of the movie — used to fetch EXTERNAL subtitles (YIFY,
@@ -429,16 +430,27 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
     _subtitleAutoSelected = false;
     _errorGraceTimer?.cancel();
     try {
+      // Resume-safe open: open PAUSED, seek to the resume position, THEN
+      // play. Opening with `play: true` and seeking right after races mpv's
+      // async load for a network stream — the autoplay may buffer from 0 and
+      // the seek gets dropped, which read as "Lanjutkan menonton starts from
+      // the beginning" (2026-08). Paused-open → seek → play is deterministic.
       await _player.open(
         Media(
           widget.args.url,
           httpHeaders: widget.args.httpHeaders,
         ),
-        play: true,
+        play: false,
       );
       if (widget.args.startAt > Duration.zero) {
         await _player.seek(widget.args.startAt);
+        appLog(
+          'FILMKU_MPV_SEEKED',
+          'to=${widget.args.startAt.inMilliseconds}ms '
+              'movieId=${widget.args.tmdbId}',
+        );
       }
+      await _player.play();
       appLog('FILMKU_MPV_OPENED', '');
       _startWatchdogs();
     } catch (e) {
@@ -644,6 +656,10 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
         _sawPlaying = true;
         _startupWatchdog?.cancel();
         appLog('FILMKU_MPV_PLAYING', '(position advanced past zero)');
+        // Full watch history: record this play ONCE per session, on the
+        // first real frame (a stream that never started must not pollute the
+        // history).
+        _recordHistory();
       }
       if (position > _lastPosition) {
         _lastPosition = position;
@@ -700,6 +716,18 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
       MiniPlayerService.instance.stop();
     }
     super.dispose();
+  }
+
+  /// Records this play in the full watch history (once per session — called
+  /// only from the first-real-frame branch of the position listener).
+  void _recordHistory() {
+    final tmdbId = widget.args.tmdbId;
+    if (tmdbId == null) return;
+    WatchHistoryService.instance.record(
+      movieId: tmdbId,
+      title: widget.args.title,
+      posterPath: widget.args.posterPath,
+    );
   }
 
   /// Persists the current playback position for continue-watching (throttled

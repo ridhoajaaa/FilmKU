@@ -7,9 +7,11 @@ import '../../../../core/constants/app_constants.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../providers/movie_providers.dart';
 import '../providers/settings_provider.dart';
+import '../providers/watch_history_provider.dart';
 import '../providers/watch_progress_provider.dart';
 import '../widgets/continue_watching_row.dart';
 import '../widgets/error_view.dart';
+import '../widgets/genre_chips_row.dart';
 import '../widgets/hero_carousel.dart';
 import '../widgets/movie_list_row.dart';
 
@@ -31,6 +33,9 @@ class HomeScreen extends ConsumerWidget {
     // Continue-watching: refreshed when the player route pops (the mpv screen
     // saves progress on close) so the row reflects the latest position.
     final continueWatching = ref.watch(watchProgressProvider);
+    // Full watch history (newest first) — the "Riwayat tontonan" link is
+    // only shown when there is something to show.
+    final history = ref.watch(watchHistoryProvider);
 
     return Scaffold(
       body: SafeArea(
@@ -77,6 +82,14 @@ class HomeScreen extends ConsumerWidget {
               ),
               // Resume where you left off — newest first.
               ContinueWatchingRow(entries: continueWatching),
+              // Browse by genre — chips open a genre grid.
+              const GenreChipsRow(),
+              // Full watch history link (all plays, including finished ones).
+              if (history.isNotEmpty)
+                _HistoryLink(
+                  count: history.length,
+                  onTap: () => context.push('/history'),
+                ),
               MovieListRow(
                 title: 'Popular',
                 moviesAsync: popular,
@@ -246,6 +259,53 @@ class _ApiKeyBanner extends StatelessWidget {
           child: const Text('Add key'),
         ),
       ],
+    );
+  }
+}
+
+/// Compact "Riwayat tontonan" link row shown under the continue-watching row
+/// when the user has any watch history — one tap opens the full history
+/// screen (2026-08 feature: every played movie, not just in-progress ones).
+class _HistoryLink extends StatelessWidget {
+  const _HistoryLink({required this.count, required this.onTap});
+
+  final int count;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final isIos = Theme.of(context).platform == TargetPlatform.iOS;
+    final row = Row(
+      children: [
+        const Icon(Icons.history_rounded, color: AppColors.textMuted, size: 18),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            'Riwayat tontonan ($count)',
+            style: const TextStyle(
+              fontSize: 13.5,
+              fontWeight: FontWeight.w600,
+              color: AppColors.textSecondary,
+            ),
+          ),
+        ),
+        const Icon(Icons.chevron_right_rounded,
+            color: AppColors.textMuted, size: 20),
+      ],
+    );
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: onTap,
+        child: isIos
+            ? GlassContainer(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                child: row,
+              )
+            : row,
+      ),
     );
   }
 }
