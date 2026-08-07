@@ -20,10 +20,11 @@ String formatDuration(Duration d) {
 /// Full-featured player controls overlay (replaces media_kit's built-in
 /// adaptive controls, which render minimal on iOS).
 ///
-/// Identical on every platform — pause, seek bar + time, mute, subtitles and
-/// a settings sheet (playback speed, subtitle size, video quality/resolution,
-/// audio track) — plus the top bar (minimize to mini player, close, title,
-/// source chip) and a tap-to-toggle / auto-hide behavior.
+/// Identical on every platform — pause, ±5s seek, seek bar + time, mute,
+/// subtitles and a settings sheet (playback speed, subtitle size, video
+/// quality/resolution, audio track) — plus the top bar (minimize to mini
+/// player, close, title, source chip) and a tap-to-toggle / auto-hide
+/// behavior.
 class MpvControlsOverlay extends StatefulWidget {
   const MpvControlsOverlay({
     super.key,
@@ -63,6 +64,23 @@ class MpvControlsOverlay extends StatefulWidget {
   /// Subtitle font-size range. Exposed for tests.
   static const double minSubtitleSize = 20;
   static const double maxSubtitleSize = 52;
+
+  /// Step used by the rewind/forward buttons.
+  static const Duration seekStep = Duration(seconds: 5);
+
+  /// Clamps [position] + [delta] to the playable range `[0, duration]` — the
+  /// target of a ±[seekStep] seek. A zero/unknown duration disables the upper
+  /// clamp (mpv hasn't reported the real length yet). Exposed for tests.
+  static Duration clampSeekTarget(
+    Duration position,
+    Duration delta,
+    Duration duration,
+  ) {
+    final target = position + delta;
+    if (target < Duration.zero) return Duration.zero;
+    if (duration > Duration.zero && target > duration) return duration;
+    return target;
+  }
 
   @override
   State<MpvControlsOverlay> createState() => _MpvControlsOverlayState();
@@ -235,6 +253,20 @@ class _MpvControlsOverlayState extends State<MpvControlsOverlay> {
     } else {
       await _player.play();
     }
+  }
+
+  /// Rewinds/forwards by [MpvControlsOverlay.seekStep] (5s), clamped to the
+  /// playable range. The on-screen position updates instantly; libmpv catches
+  /// up on its next position event.
+  void _seekBy(Duration delta) {
+    final target = MpvControlsOverlay.clampSeekTarget(
+      _position,
+      delta,
+      _duration,
+    );
+    setState(() => _position = target);
+    _player.seek(target);
+    _armHideTimer();
   }
 
   void _toggleMute() {
@@ -484,6 +516,13 @@ class _MpvControlsOverlayState extends State<MpvControlsOverlay> {
         // sticks to the real screen bottom, edge-to-edge.
         child: Row(
           children: [
+            // ±5s seek buttons flank the play/pause button (standard layout).
+            _RoundIconButton(
+              icon: Icons.replay_5_rounded,
+              tooltip: 'Mundur 5 detik',
+              onPressed: () => _seekBy(-MpvControlsOverlay.seekStep),
+              size: 34,
+            ),
             if (_buffering)
               // Buffering spinner replaces the play/pause button — keeps
               // the UI honest (a spinner in the CENTER of the video read
@@ -507,6 +546,12 @@ class _MpvControlsOverlayState extends State<MpvControlsOverlay> {
                 onPressed: _togglePlay,
                 size: 40,
               ),
+            _RoundIconButton(
+              icon: Icons.forward_5_rounded,
+              tooltip: 'Maju 5 detik',
+              onPressed: () => _seekBy(MpvControlsOverlay.seekStep),
+              size: 34,
+            ),
             Expanded(
               // CRITICAL (2026-08 root cause of the "controls in the
               // middle" complaint): `Expanded` lays out flex children with

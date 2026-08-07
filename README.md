@@ -419,6 +419,17 @@ flutter doctor   # Android toolchain should be green
 
 ## 📝 Changelog
 
+### `2026-08-07` — v1.3.27: mundur/maju 5 detik di player
+
+- **Tombol ±5s di bottom bar player** (semua platform: iOS + Android).
+  Tombol `replay_5` dan `forward_5` mengapit tombol play/pause — layout
+  standar seperti YouTube.
+- **Seek aman**: target selalu di-clamp ke rentang `0..durasi` — mundur
+  tidak pernah ke waktu negatif, maju tidak pernah melewati akhir film.
+- **Helper pure** `MpvControlsOverlay.clampSeekTarget` + `seekStep` (5s)
+  di-expose untuk test (+5 unit test).
+
+
 ### `2026-08-07` — v1.3.26: controls REALLY at the bottom (root cause: Expanded+Slider stretched the bar full-height)
 
 - **Fixed: the control bar rendered MID-SCREEN on every device.** Earlier

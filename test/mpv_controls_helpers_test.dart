@@ -24,6 +24,63 @@ void main() {
     });
   });
 
+  group('clampSeekTarget', () {
+    test('forward within range adds the delta', () {
+      expect(
+        MpvControlsOverlay.clampSeekTarget(
+          const Duration(seconds: 60),
+          MpvControlsOverlay.seekStep,
+          const Duration(minutes: 2),
+        ),
+        const Duration(seconds: 65),
+      );
+    });
+
+    test('backward within range subtracts the delta', () {
+      expect(
+        MpvControlsOverlay.clampSeekTarget(
+          const Duration(seconds: 60),
+          -MpvControlsOverlay.seekStep,
+          const Duration(minutes: 2),
+        ),
+        const Duration(seconds: 55),
+      );
+    });
+
+    test('backward clamps at zero, never negative', () {
+      expect(
+        MpvControlsOverlay.clampSeekTarget(
+          const Duration(seconds: 3),
+          -MpvControlsOverlay.seekStep,
+          const Duration(minutes: 2),
+        ),
+        Duration.zero,
+      );
+    });
+
+    test('forward clamps at the duration, never past the end', () {
+      expect(
+        MpvControlsOverlay.clampSeekTarget(
+          const Duration(minutes: 1, seconds: 58),
+          MpvControlsOverlay.seekStep,
+          const Duration(minutes: 2),
+        ),
+        const Duration(minutes: 2),
+      );
+    });
+
+    test('unknown (zero) duration disables the upper clamp', () {
+      expect(
+        MpvControlsOverlay.clampSeekTarget(
+          const Duration(seconds: 90),
+          MpvControlsOverlay.seekStep,
+          Duration.zero,
+        ),
+        const Duration(seconds: 95),
+      );
+    });
+  });
+
   group('settings presets', () {
     test('speed options are ordered and include 1.0x', () {
       const speeds = MpvControlsOverlay.speedOptions;
