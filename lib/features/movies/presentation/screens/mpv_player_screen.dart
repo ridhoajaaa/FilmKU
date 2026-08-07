@@ -346,17 +346,15 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
   Future<void> _loadExternalSubtitles() async {
     final tmdbId = widget.args.tmdbId;
     if (tmdbId == null || _failed) return;
-    // The stream already carries REAL subtitle tracks — native wins.
-    //
-    // 2026-08 on-device root cause (Redmi Note 8 Pro): 2vcdn streams report
-    // `subtitle=2` PHANTOM tracks — their `#EXT-X-MEDIA` lists carry no
-    // subtitle variants at all (verified from the live master/variant), so
-    // mpv enumerates empty tracks with NO title (`autoSelected=(no title)`).
-    // The old `isNotEmpty` gate then SKIPPED the external-subtitle fetch
-    // (the only real subtitle source), leaving the movie with nothing to
-    // render. Only tracks with a meaningful title/language are treated as
-    // real; title-less placeholders fall through to the external fetch.
-    if (_hasRealSubtitleTracks(_player.state.tracks.subtitle)) return;
+    // NOTE (2026-08 v1.3.38): the EARLY `_hasRealSubtitleTracks` gate is
+    // gone. It ran BEFORE the fetch and could silently skip the ONLY real
+    // subtitle source when a stream reports phantom tracks (2vcdn's
+    // `#EXT-X-MEDIA` lists carry no subtitle variants, yet mpv enumerates
+    // `subtitle=2` placeholders with a title) — the movie then had nothing
+    // to render. The external fetch now ALWAYS runs in the background; the
+    // post-fetch gate below still refuses to override streams that genuinely
+    // render native subtitle tracks. Best-effort either way — playback is
+    // never delayed or blocked by it.
     try {
       // Live-verified 2026-08: the YIFY chain (4 sequential HTTP calls incl.
       // the Cloudflare-protected .zip) resolves in ~1.4s from a wired

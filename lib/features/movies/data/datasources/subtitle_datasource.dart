@@ -143,7 +143,11 @@ class SubtitleDatasource {
       _fetchSubcatBestEffort(tmdbId: tmdbId)
           .timeout(subcatTimeout, onTimeout: () => null),
     ]);
-    return _pickBest(results[0], results[1]);
+    final picked = _pickBest(results[0], results[1]);
+    // ignore: avoid_print
+    debugPrint(
+        'FILMKU_SUBS_RESULT tmdbId=$tmdbId picked=${picked?.language ?? 'none'}');
+    return picked;
   }
 
   /// Fetches the best available subtitle using movie metadata the CALLER
@@ -175,7 +179,11 @@ class SubtitleDatasource {
         year: year,
       ).timeout(subcatTimeout, onTimeout: () => null),
     ]);
-    return _pickBest(results[0], results[1]);
+    final picked = _pickBest(results[0], results[1]);
+    // ignore: avoid_print
+    debugPrint(
+        'FILMKU_SUBS_RESULT title=$title year=$year picked=${picked?.language ?? 'none'}');
+    return picked;
   }
 
   /// YIFY chain wrapped so ANY failure returns null instead of cancelling
@@ -318,6 +326,9 @@ class SubtitleDatasource {
       '?search=${Uri.encodeQueryComponent(query)}',
     );
     final slugs = parseSubtitleCatSlugs(searchHtml);
+    // ignore: avoid_print
+    debugPrint('FILMKU_SUBS_SEARCH query="$query" '
+        'pageBytes=${searchHtml.length} slugs=${slugs.length}');
     if (slugs.isEmpty) return null;
     // Try up to 8 release groups — the first page usually has a subtitle,
     // but some releases only carry a few languages (a 2026-08 probe of a
@@ -337,6 +348,9 @@ class SubtitleDatasource {
           ),
         );
         final srt = await _getText('https://subtitlecat.com${pick.path}');
+        // ignore: avoid_print
+        debugPrint('FILMKU_SUBS_SLUG lang=${pick.language} '
+            'links=${links.length} srtBytes=${srt.length} slug=$slug');
         if (srt.trim().isEmpty) continue;
         // Defensive: a 200 HTML page (error/redirect shell) is NOT a
         // subtitle — never hand the player garbage text.

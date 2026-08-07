@@ -405,6 +405,29 @@ flutter doctor   # Android toolchain should be green
 
 ## 📝 Changelog
 
+### `2026-08-08` — v1.3.38: Home cards identical to Search + subtitle fetch never skipped
+
+- **iOS Home cards now pixel-match the Search tab grid.** Same MovieCard
+  widget all along, but the row used a fixed 120px card while Search's grid
+  forces a ~111px cell — different poster aspect → `BoxFit.cover` cropped
+  the artwork differently (Home top/bottom, Search left/right), which read
+  as the Home poster being "off / not centered" vs Search. `MovieListRow`
+  now replicates Search's grid math (padding 16 + spacing 12, 3 columns,
+  aspect 0.52, minus the card's 8px glass padding): same width, same
+  height, same crop. Android rows stay untouched (120px).
+- **External subtitle fetch can no longer be skipped early.** The old
+  `_hasRealSubtitleTracks` gate ran BEFORE the fetch and silently dropped
+  the only real subtitle source when a stream reported phantom tracks with
+  a title — the movie then had nothing to render. The fetch now ALWAYS runs
+  in the background; the post-fetch gate still refuses to override streams
+  that genuinely render native tracks.
+- **Subtitle diagnostics for the next on-device run.** `FILMKU_SUBS_RESULT`
+  (which source/language won), `FILMKU_SUBS_SEARCH` (query, page bytes,
+  slug count) and `FILMKU_SUBS_SLUG` (language, link count, srt bytes per
+  release page) now print to the iOS syslog so the exact failure point is
+  visible if subtitles still don't appear.
+
+
 ### `2026-08-08` — v1.3.37: subtitles finally appear again (parallel YIFY + SubtitleCat)
 
 - **Subtitle root cause fixed (on-device Supergirl report):** the subtitle
@@ -479,8 +502,9 @@ Semua tab sekarang konsisten mengambang bebas.
 <!-- VERSION-TOC:start -->
 
 <details>
-<summary>📜 Riwayat versi (52)</summary>
+<summary>📜 Riwayat versi (53)</summary>
 
+- [`v1.3.38`](#2026-08-08--v1338-home-cards-identical-to-search--subtitle-fetch-never-skipped)
 - [`v1.3.37`](#2026-08-08--v1337-subtitles-finally-appear-again-parallel-yify--subtitlecat)
 - [`v1.3.36`](#2026-08-08--v1336-cards-finally-read-centered-continue-watching-covers-fixed)
 - [`v1.3.35`](#2026-08-07--v1335-transparent-ios-tab-capsule-stale-source-retry-fix-broader-subtitles)
