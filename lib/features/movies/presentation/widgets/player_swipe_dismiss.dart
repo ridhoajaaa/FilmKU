@@ -1,12 +1,13 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
-/// Wraps a fullscreen player with an iOS-style **swipe-down-to-dismiss**
-/// gesture: drag the player down and release past the threshold (or fling
-/// down) to leave fullscreen — no need to kill the app from the background.
+/// Wraps a fullscreen player with a **swipe-down-to-dismiss** gesture: drag
+/// the player down and release past the threshold (or fling down) to leave
+/// fullscreen — no need to kill the app from the background.
 ///
-/// On non-iOS platforms this is a no-op pass-through (Android users already
-/// have the system back button), matching the platform-native behavior.
+/// Active on EVERY platform (2026-08): the YouTube-style portrait flow needs
+/// swipe-down-to-popup on Android too (the user tests on Android first), and
+/// iOS users get the idiom they asked for. Android's system back button keeps
+/// working as a second exit path.
 ///
 /// While dragging, the player translates down with the finger; releasing
 /// above the threshold springs it back. `HitTestBehavior.translucent` lets
@@ -40,11 +41,6 @@ class _PlayerSwipeDismissState extends State<PlayerSwipeDismiss> {
 
   @override
   Widget build(BuildContext context) {
-    // Android/iOS-only: Android already exits fullscreen with the system back
-    // button; the swipe gesture is the iOS idiom the user asked for.
-    if (defaultTargetPlatform != TargetPlatform.iOS) {
-      return widget.child;
-    }
     return GestureDetector(
       behavior: HitTestBehavior.translucent,
       onVerticalDragUpdate: (details) {

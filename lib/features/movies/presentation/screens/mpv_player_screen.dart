@@ -6,10 +6,13 @@ import 'package:go_router/go_router.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
+import '../../../../core/local/watch_progress_service.dart';
 import '../../../../core/media/mini_player_service.dart';
 import '../../../../core/platform/orientation_changer.dart';
 import '../../../../core/utils/app_logger.dart';
 import '../../data/datasources/subtitle_datasource.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
+import 'package:screen_brightness/screen_brightness.dart';
 import '../widgets/error_view.dart';
 import '../widgets/mpv_controls_overlay.dart';
 import '../widgets/player_swipe_dismiss.dart';
@@ -25,6 +28,7 @@ class MpvPlayerArgs {
     this.tmdbId,
     this.movieYear,
     this.imdbId,
+    this.posterPath,
   });
 
   /// Direct `.m3u8`/`.mp4` URL captured from inside the WebView fallback.
@@ -53,6 +57,10 @@ class MpvPlayerArgs {
   /// IMDB id (when already known) — lets the YIFY subtitle chain run
   /// without a TMDB `external_ids` lookup.
   final String? imdbId;
+
+  /// Poster path of the movie — stored with the watch-progress entry so the
+  /// Home "Lanjutkan menonton" row can render the poster.
+  final String? posterPath;
 
   /// Extra HTTP headers sent on every request to the stream CDN (mpv's
   /// `http-header-fields`).
@@ -238,6 +246,26 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
   /// session, so a resume doesn't re-toast).
   bool _subsResultShown = false;
 
+  /// Watch-progress save throttle: the position stream emits very often, so
+  /// progress is persisted at most every [progressSaveInterval] while playing.
+  static const Duration progressSaveInterval = Duration(seconds: 5);
+  DateTime _lastProgressSave = DateTime.fromMillisecondsSinceEpoch(0);
+
+  /// True while this screen is the active fullscreen player (wakelock + saved
+  /// screen brightness apply only then — when minimized, the user browses the
+  /// app, so the screen may sleep normally).
+  bool _wakelockHeld = false;
+
+  /// YouTube-style portrait inline mode: the video renders as a 16:9 box in
+  /// PORTRAIT orientation with the movie info below (no immersive bars), and
+  /// a swipe down pops it into the floating mini player — exactly like
+  /// YouTube's "small player" view.
+  bool _portraitMode = false;
+
+  /// True when this session changed the system brightness via the player's
+  /// left-edge vertical-drag gesture; the system value is restored on exit.
+  bool _brightnessChanged = false;
+
   @override
   void initState() {
     super.initState();
@@ -245,6 +273,10 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
       _enterLandscape();
     });
     _initPlayer();
+    // Keep the screen awake while the movie plays (2026-08 request) and take
+    // over brightness control for the volume/brightness gestures.
+    WakelockPlus.enable();
+    _wakelockHeld = true;
   }
 
   /// Acquires the playback session from [MiniPlayerService] — creating a
@@ -613,6 +645,14 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
         // transient; cancel the stall timer.
         _errorGraceTimer?.cancel();
       }
+      // Continue-watching: persist position throttled while playing (the
+      // stream emits position far more often than we want to write to Hive).
+      final now = DateTime.now();
+      if (position > Duration.zero &&
+          now.difference(_lastProgressSave) >= progressSaveInterval) {
+        _lastProgressSave = now;
+        _saveProgress();
+      }
     });
   }
 
@@ -635,6 +675,17 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
     _positionSub?.cancel();
     _tracksSub?.cancel();
     _subtitleNotice.dispose();
+    // Persist where the user stopped (continue-watching), then release the
+    // screen-awake lock + restore the system brightness.
+    _saveProgress();
+    if (_wakelockHeld) {
+      WakelockPlus.disable();
+      _wakelockHeld = false;
+    }
+    if (_brightnessChanged) {
+      ScreenBrightness().resetApplicationScreenBrightness();
+      _brightnessChanged = false;
+    }
     _restorePortrait();
     // Player + local HLS relay lifecycle is owned by MiniPlayerService so the
     // mini player keeps playing after this route pops. Only a pop that was
@@ -643,6 +694,24 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
       MiniPlayerService.instance.stop();
     }
     super.dispose();
+  }
+
+  /// Persists the current playback position for continue-watching (throttled
+  /// while playing; always saved on dispose). The entry is auto-cleared by the
+  /// service when the movie is essentially finished.
+  void _saveProgress() {
+    final tmdbId = widget.args.tmdbId;
+    if (tmdbId == null) return;
+    final pos = _player.state.position;
+    final dur = _player.state.duration;
+    if (pos <= Duration.zero) return;
+    WatchProgressService.instance.save(
+      movieId: tmdbId,
+      title: widget.args.title,
+      posterPath: widget.args.posterPath,
+      position: pos,
+      duration: dur,
+    );
   }
 
   Future<void> _enterLandscape() async {
@@ -676,6 +745,24 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
     if (mounted) context.pop<bool>(failed);
   }
 
+  /// Toggles the YouTube-style portrait inline mode.
+  ///
+  /// Portrait: restore orientation + edge-to-edge UI (no immersive bars) so
+  /// the video renders in a 16:9 box with the movie info below. Fullscreen:
+  /// force landscape + immersive (the default player experience).
+  Future<void> _togglePortrait() async {
+    setState(() => _portraitMode = !_portraitMode);
+    if (_portraitMode) {
+      await OrientationChanger.restore();
+      await SystemChrome.setPreferredOrientations([
+        DeviceOrientation.portraitUp,
+      ]);
+      await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    } else {
+      await _enterLandscape();
+    }
+  }
+
   /// "Pop up film": keeps playback running in the floating mini player.
   void _minimize() {
     // Never minimize a stream that NEVER started (auto-failover notice): the
@@ -690,6 +777,186 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
     context.pop<bool>(false);
   }
 
+  /// The player surface: the video + the full controls overlay. In fullscreen
+  /// it fills the screen; in portrait mode it's the 16:9 box at the top.
+  Widget _buildPlayerSurface() {
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        // Custom full-featured controls — pause, mute, subtitles and a
+        // settings sheet (speed, subtitle size, resolution, audio) plus
+        // the top bar (minimize, close, title, source chip). Identical
+        // on iOS and Android. Positioned.fill pins the overlay to the
+        // FULL screen edge-to-edge so no stale parent inset can squeeze
+        // the controls off the bottom.
+        Positioned.fill(
+          child: _videoController != null
+              ? MpvControlsOverlay(
+                  controller: _videoController!,
+                  title: widget.args.title,
+                  sourceLabel: widget.args.sourceLabel,
+                  onMinimize: _minimize,
+                  onClose: _close,
+                  onTogglePortrait: _togglePortrait,
+                  portraitMode: _portraitMode,
+                  notice: _subtitleNotice,
+                )
+              : const ColoredBox(color: Colors.black),
+        ),
+        if (_failed && _autoFailover)
+          // Stream never started — auto-switching to the backup player.
+          // COMPACT card pinned to the UPPER area (below the top bar), NOT
+          // centered: a centered card sat over the middle of the still-
+          // loading video — the exact "controls in the middle" complaint
+          // (2026-08). The video stays fully visible; the real CDN error
+          // (e.g. "HTTP 428") is shown underneath so the user sees WHY
+          // before the screen auto-pops into the WebView fallback.
+          Align(
+            alignment: const Alignment(0, -0.7),
+            child: Material(
+              color: const Color(0xE616181D),
+              borderRadius: BorderRadius.circular(14),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 26,
+                  vertical: 20,
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const CircularProgressIndicator(color: Colors.white70),
+                    const SizedBox(height: 14),
+                    const Text(
+                      'Stream tidak dapat dimulai — '
+                      'beralih ke pemutar cadangan…',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 14,
+                      ),
+                    ),
+                    if (_failoverDetail.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        _failoverDetail,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          color: Colors.white54,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          ),
+        if (_failed && !_autoFailover)
+          // Compact card pinned to the UPPER area (below the top bar), NOT
+          // centered — a centered card over the middle of the video is
+          // the "controls in the middle" complaint (2026-08). The video
+          // keeps playing behind and the X / PiP stay usable; Retry /
+          // Back-to-WebView remain pressable (they're in the card, on
+          // top).
+          Align(
+            alignment: const Alignment(0, -0.7),
+            child: Material(
+              color: const Color(0xF016181D),
+              borderRadius: BorderRadius.circular(14),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 18,
+                ),
+                child: ErrorView(
+                  compact: true,
+                  message:
+                      'Native playback failed for ${widget.args.sourceLabel}.',
+                  onRetry: () {
+                    setState(() {
+                      _failed = false;
+                      _autoFailover = false;
+                    });
+                    _open();
+                  },
+                  secondaryLabel: 'Back to WebView',
+                  onSecondary: () => _close(failed: true),
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  /// YouTube-style portrait inline mode: the 16:9 video box at the top with
+  /// the movie info below (title, source, a "Pop up film" hint). Swipe down
+  /// anywhere pops it into the floating mini player — like YouTube's small
+  /// player. In fullscreen mode the player fills the screen as before.
+  Widget _buildPortraitBody() {
+    return SafeArea(
+      child: Column(
+        children: [
+          AspectRatio(
+            aspectRatio: 16 / 9,
+            child: _buildPlayerSurface(),
+          ),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    widget.args.title,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    widget.args.sourceLabel,
+                    style: const TextStyle(
+                      color: Colors.white54,
+                      fontSize: 13,
+                    ),
+                  ),
+                  const Spacer(),
+                  const Row(
+                    children: [
+                      Icon(
+                        Icons.swipe_down_alt_rounded,
+                        color: Colors.white38,
+                        size: 20,
+                      ),
+                      SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Geser ke bawah untuk memunculkan mini player — '
+                          'putar terus berjalan.',
+                          style: TextStyle(
+                            color: Colors.white38,
+                            fontSize: 13,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -698,120 +965,16 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
       // so the body must never be shrunk by any viewInset (a transient
       // keyboard inset on some ROMs would otherwise compress the player).
       resizeToAvoidBottomInset: false,
-      // NO outer SafeArea: the player runs in IMMERSIVE mode (system bars
-      // hidden); the bars inside [MpvControlsOverlay] handle their own
-      // insets so nothing gets pushed off the true screen edges.
+      // In fullscreen there is NO outer SafeArea (immersive mode hides the
+      // system bars; the overlay bars handle their own insets). In portrait
+      // mode the movie info below the video DOES need the SafeArea.
       body: PlayerSwipeDismiss(
-        // iOS swipe-down = "pop up film" (minimize, keep playing); full
-        // close is the X button (or the system back on Android).
+        // Swipe down = "pop up film" (minimize, keep playing) — on every
+        // platform (2026-08: the user tests on Android first, and the
+        // YouTube-style portrait flow needs the swipe on Android too). Full
+        // close stays the X button (or the system back).
         onDismiss: _minimize,
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            // Custom full-featured controls — pause, mute, subtitles and a
-            // settings sheet (speed, subtitle size, resolution, audio) plus
-            // the top bar (minimize, close, title, source chip). Identical
-            // on iOS and Android. Positioned.fill pins the overlay to the
-            // FULL screen edge-to-edge so no stale parent inset can squeeze
-            // the controls off the bottom.
-            Positioned.fill(
-              child: _videoController != null
-                  ? MpvControlsOverlay(
-                      controller: _videoController!,
-                      title: widget.args.title,
-                      sourceLabel: widget.args.sourceLabel,
-                      onMinimize: _minimize,
-                      onClose: _close,
-                      notice: _subtitleNotice,
-                    )
-                  : const ColoredBox(color: Colors.black),
-            ),
-            if (_failed && _autoFailover)
-              // Stream never started — auto-switching to the backup player.
-              // COMPACT card pinned to the UPPER area (below the top bar), NOT
-              // centered: a centered card sat over the middle of the still-
-              // loading video — the exact "controls in the middle" complaint
-              // (2026-08). The video stays fully visible; the real CDN error
-              // (e.g. "HTTP 428") is shown underneath so the user sees WHY
-              // before the screen auto-pops into the WebView fallback.
-              Align(
-                alignment: const Alignment(0, -0.7),
-                child: Material(
-                  color: const Color(0xE616181D),
-                  borderRadius: BorderRadius.circular(14),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 26,
-                      vertical: 20,
-                    ),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const CircularProgressIndicator(color: Colors.white70),
-                        const SizedBox(height: 14),
-                        const Text(
-                          'Stream tidak dapat dimulai — '
-                          'beralih ke pemutar cadangan…',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 14,
-                          ),
-                        ),
-                        if (_failoverDetail.isNotEmpty) ...[
-                          const SizedBox(height: 8),
-                          Text(
-                            _failoverDetail,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            textAlign: TextAlign.center,
-                            style: const TextStyle(
-                              color: Colors.white54,
-                              fontSize: 12,
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            if (_failed && !_autoFailover)
-              // Compact card pinned to the UPPER area (below the top bar), NOT
-              // centered — a centered card over the middle of the video is
-              // the "controls in the middle" complaint (2026-08). The video
-              // keeps playing behind and the X / PiP stay usable; Retry /
-              // Back-to-WebView remain pressable (they're in the card, on
-              // top).
-              Align(
-                alignment: const Alignment(0, -0.7),
-                child: Material(
-                  color: const Color(0xF016181D),
-                  borderRadius: BorderRadius.circular(14),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 20,
-                      vertical: 18,
-                    ),
-                    child: ErrorView(
-                      compact: true,
-                      message:
-                          'Native playback failed for ${widget.args.sourceLabel}.',
-                      onRetry: () {
-                        setState(() {
-                          _failed = false;
-                          _autoFailover = false;
-                        });
-                        _open();
-                      },
-                      secondaryLabel: 'Back to WebView',
-                      onSecondary: () => _close(failed: true),
-                    ),
-                  ),
-                ),
-              ),
-          ],
-        ),
+        child: _portraitMode ? _buildPortraitBody() : _buildPlayerSurface(),
       ),
     );
   }

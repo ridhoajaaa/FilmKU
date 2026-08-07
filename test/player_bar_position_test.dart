@@ -76,11 +76,9 @@ void main() {
     await tester.pump();
 
     final overlaySize = tester.getSize(find.byType(Stack).first);
-    final barBox =
-        tester.renderObject<RenderBox>(find.byKey(bottomKey));
+    final barBox = tester.renderObject<RenderBox>(find.byKey(bottomKey));
 
-    final barBottom =
-        barBox.localToGlobal(Offset(0, barBox.size.height)).dy;
+    final barBottom = barBox.localToGlobal(Offset(0, barBox.size.height)).dy;
     // ignore: avoid_print
     print('FIXED: overlay=$overlaySize bar=${barBox.size} '
         'barBottomY=$barBottom');
@@ -104,8 +102,7 @@ void main() {
     await tester.pumpWidget(buildPlayerStack(fixed: false));
     await tester.pump();
     final overlaySize = tester.getSize(find.byType(Stack).first);
-    final barBox =
-        tester.renderObject<RenderBox>(find.byKey(bottomKey));
+    final barBox = tester.renderObject<RenderBox>(find.byKey(bottomKey));
     // ignore: avoid_print
     print('UNFIXED: bar=${barBox.size} overlay=$overlaySize');
     expect(

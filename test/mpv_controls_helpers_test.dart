@@ -108,6 +108,36 @@ void main() {
     });
   });
 
+  group('vertical drag sides (volume/brightness)', () {
+    test('left half of the screen is brightness', () {
+      expect(
+        MpvControlsOverlay.dragSideFor(const Offset(100, 300), 600),
+        VerticalDragSide.brightness,
+      );
+    });
+
+    test('right half of the screen is volume', () {
+      expect(
+        MpvControlsOverlay.dragSideFor(const Offset(400, 300), 600),
+        VerticalDragSide.volume,
+      );
+    });
+
+    test('exact middle is volume (right-leaning)', () {
+      expect(
+        MpvControlsOverlay.dragSideFor(const Offset(300, 300), 600),
+        VerticalDragSide.volume,
+      );
+    });
+
+    test('degenerate width defaults to volume', () {
+      expect(
+        MpvControlsOverlay.dragSideFor(const Offset(0, 0), 0),
+        VerticalDragSide.volume,
+      );
+    });
+  });
+
   group('settings presets', () {
     test('speed options are ordered and include 1.0x', () {
       const speeds = MpvControlsOverlay.speedOptions;

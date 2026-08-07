@@ -7,6 +7,8 @@ import '../../../../core/constants/app_constants.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../providers/movie_providers.dart';
 import '../providers/settings_provider.dart';
+import '../providers/watch_progress_provider.dart';
+import '../widgets/continue_watching_row.dart';
 import '../widgets/error_view.dart';
 import '../widgets/hero_carousel.dart';
 import '../widgets/movie_list_row.dart';
@@ -26,6 +28,9 @@ class HomeScreen extends ConsumerWidget {
     final popular = ref.watch(popularMoviesProvider);
     final topRated = ref.watch(topRatedMoviesProvider);
     final upcoming = ref.watch(upcomingMoviesProvider);
+    // Continue-watching: refreshed when the player route pops (the mpv screen
+    // saves progress on close) so the row reflects the latest position.
+    final continueWatching = ref.watch(watchProgressProvider);
 
     return Scaffold(
       body: SafeArea(
@@ -70,6 +75,8 @@ class HomeScreen extends ConsumerWidget {
                   child: Center(child: CircularProgressIndicator()),
                 ),
               ),
+              // Resume where you left off — newest first.
+              ContinueWatchingRow(entries: continueWatching),
               MovieListRow(
                 title: 'Popular',
                 moviesAsync: popular,

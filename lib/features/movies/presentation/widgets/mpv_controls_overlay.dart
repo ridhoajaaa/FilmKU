@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
+import 'package:screen_brightness/screen_brightness.dart';
 
 import '../../../../core/local/settings_service.dart';
 
@@ -33,6 +34,8 @@ class MpvControlsOverlay extends StatefulWidget {
     required this.sourceLabel,
     required this.onMinimize,
     required this.onClose,
+    this.onTogglePortrait,
+    this.portraitMode = false,
     this.notice,
   });
 
@@ -45,6 +48,13 @@ class MpvControlsOverlay extends StatefulWidget {
 
   /// Fully close the player (playback stops).
   final VoidCallback onClose;
+
+  /// Toggles the YouTube-style portrait inline mode (null hides the button).
+  final VoidCallback? onTogglePortrait;
+
+  /// Whether the player is currently in portrait inline mode (the top bar
+  /// shows the "enter fullscreen" icon instead of "exit fullscreen").
+  final bool portraitMode;
 
   /// One-shot toast channel from the owning screen (external-subtitle load
   /// outcomes). Non-null values are shown as a brief toast in the UPPER
@@ -96,6 +106,15 @@ class MpvControlsOverlay extends StatefulWidget {
     return target;
   }
 
+  /// Left half of the screen = brightness; right half = volume (MX-Player
+  /// style). Exposed for tests.
+  static VerticalDragSide dragSideFor(Offset pos, double width) {
+    if (width <= 0) return VerticalDragSide.volume;
+    return pos.dx < width / 2
+        ? VerticalDragSide.brightness
+        : VerticalDragSide.volume;
+  }
+
   @override
   State<MpvControlsOverlay> createState() => _MpvControlsOverlayState();
 }
@@ -135,6 +154,94 @@ class _MpvControlsOverlayState extends State<MpvControlsOverlay> {
   IconData? _seekFeedbackIcon;
   Offset? _seekFeedbackPos;
   Timer? _seekFeedbackTimer;
+
+  /// Vertical-drag gesture (volume on the right half, brightness on the left,
+  /// MX-Player style). Which side the drag started on and the value it began
+  /// from, so the drag DELTA maps onto the existing value instead of
+  /// overwriting it.
+  VerticalDragSide? _dragSide;
+  double _dragStartValue = 0;
+  double _dragFeedbackValue = 0;
+
+  /// Left half of the screen = brightness; right half = volume. Exposed for
+  /// tests.
+  VerticalDragSide _dragSideFor(Offset pos, double width) =>
+      MpvControlsOverlay.dragSideFor(pos, width);
+
+  void _onVerticalDragStart(DragStartDetails details) {
+    final size = context.size;
+    if (size == null) return;
+    _dragSide = _dragSideFor(details.localPosition, size.width);
+    _dragStartValue = _dragSide == VerticalDragSide.volume
+        ? _volume
+        : 100; // brightness starts at 100 (system) in this app's player
+    _dragFeedbackValue = _dragStartValue;
+  }
+
+  void _onVerticalDragUpdate(DragUpdateDetails details) {
+    final side = _dragSide;
+    if (side == null) return;
+    // Drag up = increase, drag down = decrease (~0.4 per px across a typical
+    // drag, so a full-screen swipe sweeps the whole range).
+    final next =
+        (_dragStartValue - details.delta.dy * 0.4).clamp(0.0, 100.0).toDouble();
+    _dragFeedbackValue = next;
+    if (side == VerticalDragSide.volume) {
+      _player.setVolume(next);
+      if (next <= 0) {
+        SettingsService.instance.setMuted(true);
+      } else if (next > 0 && _muted) {
+        SettingsService.instance.setMuted(false);
+      }
+    } else {
+      // Brightness: 0..1 for the plugin.
+      ScreenBrightness().setApplicationScreenBrightness(next / 100);
+    }
+    setState(() {});
+  }
+
+  void _onVerticalDragEnd(DragEndDetails details) {
+    _dragSide = null;
+  }
+
+  /// Feedback pill for the vertical-drag gesture (shown at the drag side so
+  /// the user sees the value change live).
+  Widget? _buildDragFeedback(double width) {
+    final side = _dragSide;
+    if (side == null) return null;
+    final icon = side == VerticalDragSide.volume
+        ? Icons.volume_up_rounded
+        : Icons.brightness_high_rounded;
+    return Align(
+      alignment: side == VerticalDragSide.volume
+          ? const Alignment(0.8, 0)
+          : const Alignment(-0.8, 0),
+      child: IgnorePointer(
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          decoration: BoxDecoration(
+            color: Colors.black54,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, color: Colors.white, size: 20),
+              const SizedBox(width: 6),
+              Text(
+                '${_dragFeedbackValue.round()}%',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 
   // Subtitle state: a ValueNotifier so the modal settings sheet can update it
   // live while the (underlying) SubtitleViewConfiguration rebuilds.
@@ -440,14 +547,18 @@ class _MpvControlsOverlayState extends State<MpvControlsOverlay> {
           ),
         ),
         // Tap layer: toggles controls on single tap; double-tap on the left
-        // third rewinds 10s and the right third forwards 10s. Sits UNDER
-        // the bars so button taps never reach it.
+        // third rewinds 10s and the right third forwards 10s; vertical drag
+        // on the right half changes volume, on the left half brightness
+        // (MX-Player style). Sits UNDER the bars so button taps never reach it.
         Positioned.fill(
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
             onTap: _toggleVisible,
             onDoubleTapDown: _onDoubleTapDown,
             onDoubleTap: _onDoubleTap,
+            onVerticalDragStart: _onVerticalDragStart,
+            onVerticalDragUpdate: _onVerticalDragUpdate,
+            onVerticalDragEnd: _onVerticalDragEnd,
           ),
         ),
         // Top bar (PiP, title, source, close X): ALWAYS visible so the
@@ -510,6 +621,11 @@ class _MpvControlsOverlayState extends State<MpvControlsOverlay> {
               ),
             ),
           ),
+        // Vertical-drag feedback (volume right / brightness left) with the
+        // live value — shown at the drag side, never centered.
+        if (_dragSide != null) ...[
+          _buildDragFeedback(context.size?.width ?? 0)!,
+        ],
       ],
     );
   }
@@ -539,6 +655,19 @@ class _MpvControlsOverlayState extends State<MpvControlsOverlay> {
               tooltip: 'Pop up film (mini player)',
               onPressed: widget.onMinimize,
             ),
+            if (widget.onTogglePortrait != null) ...[
+              const SizedBox(width: 8),
+              _RoundIconButton(
+                icon: widget.portraitMode
+                    ? Icons.fullscreen_rounded
+                    : Icons.fullscreen_exit_rounded,
+                tooltip: widget.portraitMode
+                    ? 'Kembali ke fullscreen'
+                    : 'Mode potret (seperti YouTube)',
+                onPressed: widget.onTogglePortrait!,
+                size: 30,
+              ),
+            ],
             const SizedBox(width: 10),
             Expanded(
               child: Text(
@@ -1009,3 +1138,7 @@ class _SheetHint extends StatelessWidget {
 /// seek gesture maps [SeekZone.left] to rewind and [SeekZone.right] to
 /// forward; the middle third does nothing.
 enum SeekZone { left, middle, right }
+
+/// Which half of the screen a vertical drag started on: right = volume,
+/// left = brightness (MX-Player style).
+enum VerticalDragSide { volume, brightness }

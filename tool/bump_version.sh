@@ -8,12 +8,16 @@
 #
 # Default is `--build` (increment the +N build number, keep the X.Y.Z).
 #
-#   --major   2.0.0+1        (breaking / big update)
-#   --minor   1.2.0+1        (new feature — the normal "I shipped something")
-#   --patch   1.1.1+1        (bugfix only)
+#   --major   2.0.0+N        (breaking / big update)
+#   --minor   1.2.0+N        (new feature — the normal "I shipped something")
+#   --patch   1.1.1+N        (bugfix only)
 #   --build   1.1.0+3        (same version, new build — e.g. re-sign test)
 #
-# The build number always increments by 1; a version bump resets it to +1.
+# The build number ALWAYS increments by 1 — it is NEVER reset (2026-08 fix:
+# resetting it to +1 on a version bump produced a LOWER Android versionCode
+# than the installed build, so `adb install -r` failed with
+# INSTALL_FAILED_VERSION_DOWNGRADE and updates needed the -d flag). Android
+# versionCode = the +N build number, which must be strictly increasing.
 # Prints the new version on success.
 
 set -euo pipefail
@@ -42,9 +46,10 @@ PAT="${BASH_REMATCH[3]}"
 BLD="${BASH_REMATCH[4]}"
 
 case "$MODE" in
-  --major) MAJ=$((MAJ + 1)); MIN=0; PAT=0; BLD=1 ;;
-  --minor) MIN=$((MIN + 1)); PAT=0; BLD=1 ;;
-  --patch) PAT=$((PAT + 1)); BLD=1 ;;
+  # Build number always increments (never resets — see the header comment).
+  --major) MAJ=$((MAJ + 1)); MIN=0; PAT=0; BLD=$((BLD + 1)) ;;
+  --minor) MIN=$((MIN + 1)); PAT=0; BLD=$((BLD + 1)) ;;
+  --patch) PAT=$((PAT + 1)); BLD=$((BLD + 1)) ;;
   --build) BLD=$((BLD + 1)) ;;
 esac
 

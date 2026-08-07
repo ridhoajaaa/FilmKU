@@ -7,6 +7,7 @@ import 'package:media_kit/media_kit.dart';
 
 import 'app.dart';
 import 'core/local/settings_service.dart';
+import 'core/local/watch_progress_service.dart';
 import 'features/movies/data/local/watchlist_service.dart';
 
 Future<void> main() async {
@@ -39,6 +40,7 @@ Future<void> main() async {
   await Hive.initFlutter();
   await SettingsService.init();
   await WatchlistService.init();
+  await WatchProgressService.init();
 
   runApp(
     LiquidGlassWidgets.wrap(

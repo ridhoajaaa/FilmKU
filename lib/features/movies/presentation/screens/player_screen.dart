@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../../../core/constants/app_constants.dart';
 import '../../../../core/local/settings_service.dart';
+import '../../../../core/local/watch_progress_service.dart';
 import '../../../../core/net/hls_relay.dart';
 import '../../../../core/platform/orientation_changer.dart';
 import '../../../../core/theme/app_colors.dart';
@@ -355,9 +356,19 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
       _error = null;
     });
 
+    // Continue-watching: resume from the saved position when there is one.
+    final saved = WatchProgressService.instance.get(widget.movieId);
+    final startAt = saved?.position ?? Duration.zero;
+    if (startAt > Duration.zero) {
+      debugPrint(
+        'FILMKU_PLAYER_RESUME movieId=${widget.movieId} '
+        'at=${startAt.inMilliseconds}ms',
+      );
+    }
+
     debugPrint('FILMKU_PLAYER_DIRECT source=${source.sourceId} url=$url');
     await _playInMpv(
-      WebViewNativeStream(url: url, position: Duration.zero),
+      WebViewNativeStream(url: url, position: startAt),
       source,
     );
   }
@@ -454,6 +465,8 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
         // subtitles because the old path needed TMDB for every lookup).
         tmdbId: widget.movieId,
         movieYear: _movieYear(),
+        // Poster for the continue-watching entry (Home "Lanjutkan menonton").
+        posterPath: _moviePosterPath(),
       ),
     );
     if (!mounted) return;
@@ -603,6 +616,16 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   String _movieTitle() {
     final details = ref.read(movieDetailsProvider(widget.movieId));
     return _movieTitleFrom(details);
+  }
+
+  /// Poster path of the movie (from its TMDB details) — stored with the
+  /// watch-progress entry so the Home "Lanjutkan menonton" row can render it.
+  String? _moviePosterPath() {
+    final details = ref.read(movieDetailsProvider(widget.movieId));
+    if (details is AsyncData) {
+      return details.value?.movie.posterPath;
+    }
+    return null;
   }
 
   /// Release year of the movie (from its TMDB release date) — passed to the

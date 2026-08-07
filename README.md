@@ -419,6 +419,26 @@ flutter doctor   # Android toolchain should be green
 
 ## 📝 Changelog
 
+### `2026-08-07` — v1.3.29: continue watching, wakelock, gesture volume/brightness, mode potret, fix versionCode
+
+- **Lanjutkan menonton**: posisi terakhir tiap film disimpan (Hive) — buka
+  film lagi langsung resume dari posisi berhenti, dan Home punya baris
+  "Lanjutkan menonton" (poster + progress bar + waktu, tap untuk lanjut).
+  Film yang sudah selesai (~92%) otomatis dihapus dari baris.
+- **Layar tetap menyala** saat player aktif (wakelock_plus) — layar tidak
+  mati di tengah nonton; dilepas saat keluar/minimize.
+- **Gesture volume & brightness** (MX-Player style): swipe vertikal di sisi
+  KANAN layar = volume, sisi KIRI = brightness, dengan indikator nilai
+  live. Brightness sistem di-reset saat player ditutup.
+- **Mode potret ala YouTube**: tombol di top bar untuk keluar dari
+  fullscreen ke tampilan potret (video 16:9 di atas + info film di bawah);
+  swipe ke bawah → jadi mini player popup (aktif di Android juga, bukan
+  hanya iOS).
+- **Fix versionCode**: bump_version.sh tidak lagi me-reset build number ke
+  +1 — selalu naik, jadi `adb install -r` tanpa `-d` tidak akan gagal
+  dengan INSTALL_FAILED_VERSION_DOWNGRADE.
+
+
 ### `2026-08-07` — v1.3.28: double-tap sisi layar untuk ±10 detik
 
 - **Double-tap untuk seek cepat (gaya YouTube)**: ketuk dua kali di sisi
