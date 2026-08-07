@@ -3,8 +3,10 @@ r"""
 gen_changelog_toc.py — regenerate the collapsible "Riwayat versi" (version
 TOC) block in README.md from the changelog headings themselves.
 
-Keeps the version list in sync with the changelog: after adding a new changelog
-entry, run `python3 tool/gen_changelog_toc.py` and commit. The script parses
+Keeps the version list in sync with the changelog. `tool/bump_version.sh`
+calls this automatically after every version bump (inserting a placeholder
+changelog heading first, so the new version shows up in the list immediately);
+you can also run `python3 tool/gen_changelog_toc.py` manually. The script parses
 every `### `date` — vX.Y.Z: …` heading inside `## 📝 Changelog`, computes the
 GitHub anchor for each (same slug algorithm GitHub uses to render heading
 ids), and rewrites the `<details>` block between the marker comments:

@@ -229,18 +229,37 @@ class SubtitleDatasource {
   /// from the movie object it already holds.
   Future<SubtitleInfo?> _fetchFromSubtitleCat(String title,
       {String? year}) async {
-    final query = (year == null || year.isEmpty) ? title : '$title $year';
+    // Search WITH the year first (more precise match), then retry WITHOUT it
+    // — SubtitleCat titles sometimes omit the release year, so a year-scoped
+    // search can miss a subtitle the plain-title search finds (2026-08 user
+    // report: some movies played with NO subtitle at all even though one
+    // existed under a year-less listing).
+    final queries = <String>[
+      if (year != null && year.isNotEmpty) '$title $year',
+      title,
+    ];
+    for (final query in queries) {
+      final found = await _searchSubtitleCat(query);
+      if (found != null) return found;
+    }
+    return null;
+  }
+
+  /// One SubtitleCat search: [query] → search page → release detail pages →
+  /// direct `.srt` download. Indonesian preferred, English fallback.
+  Future<SubtitleInfo?> _searchSubtitleCat(String query) async {
     final searchHtml = await _getText(
       'https://subtitlecat.com/index.php'
       '?search=${Uri.encodeQueryComponent(query)}',
     );
     final slugs = parseSubtitleCatSlugs(searchHtml);
     if (slugs.isEmpty) return null;
-    // Try up to 5 release groups — the first page usually has a subtitle,
+    // Try up to 8 release groups — the first page usually has a subtitle,
     // but some releases only carry a few languages (a 2026-08 probe of a
     // popular movie found 55 release pages; Indonesian appeared only on
-    // SOME of them).
-    for (final slug in slugs.take(5)) {
+    // SOME of them). 8 > 5 widens the net for old/obscure films without
+    // ballooning the request count.
+    for (final slug in slugs.take(8)) {
       try {
         final detail = await _getText('https://subtitlecat.com/$slug');
         final links = parseSubtitleCatSrtLinks(detail);

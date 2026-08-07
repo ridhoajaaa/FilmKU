@@ -18,6 +18,12 @@
 # than the installed build, so `adb install -r` failed with
 # INSTALL_FAILED_VERSION_DOWNGRADE and updates needed the -d flag). Android
 # versionCode = the +N build number, which must be strictly increasing.
+#
+# Also keeps the README "Riwayat versi" list in sync: inserts a placeholder
+# changelog heading for the new version (if one isn't there yet) and runs
+# tool/gen_changelog_toc.py, so the new version shows up in the version TOC
+# immediately.
+#
 # Prints the new version on success.
 
 set -euo pipefail
@@ -70,3 +76,49 @@ grep -q "^version: $NEW$" "$PUBSPEC" \
 grep -q "appVersion = '$SHORT'" "$CONSTANTS" \
   || { echo "ERROR: AppConstants.appVersion not updated as expected" >&2; exit 1; }
 echo "OK: pubspec.yaml + AppConstants.appVersion in sync."
+
+# 3. README version TOC (tool/gen_changelog_toc.py).
+#    The "Riwayat versi" list is generated FROM the changelog headings, so a
+#    new version only shows up once its `### `date` — vX.Y.Z: …` heading
+#    exists. Insert a placeholder heading for the new version (unless one was
+#    already written before bumping) and regenerate the TOC, so v$SHORT lands
+#    in the version list immediately. Edit the placeholder before committing.
+#    Note: editing the heading TITLE changes its GitHub anchor, so re-run
+#    tool/gen_changelog_toc.py after rewriting the title.
+README="$ROOT/README.md"
+GEN="$ROOT/tool/gen_changelog_toc.py"
+
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "WARN: python3 not found — README version TOC NOT refreshed (run tool/gen_changelog_toc.py after writing the changelog)."
+elif [[ ! -f "$README" || ! -f "$GEN" ]]; then
+  echo "WARN: README.md or tool/gen_changelog_toc.py missing — version TOC NOT refreshed."
+else
+  # --build keeps the SAME X.Y.Z, so the heading already exists and the
+  # dedupe guard below skips insertion — a build bump never creates a new
+  # changelog entry. Only --major/--minor/--patch get a placeholder.
+  if ! grep -qE "^### .*v${SHORT}:" "$README"; then
+    TODAY="$(date +%F)"
+    python3 - "$README" "$TODAY" "$SHORT" <<'PY' || echo "WARN: could not insert changelog placeholder."
+import sys
+path, today, short = sys.argv[1], sys.argv[2], sys.argv[3]
+text = open(path, encoding="utf-8").read()
+marker = "## 📝 Changelog\n"
+ph = f"### `{today}` — v{short}: (isi changelog di sini)"
+if marker not in text:
+    print("SKIP: changelog section (## 📝 Changelog) not found in README.md")
+elif ph in text:
+    print("SKIP: placeholder heading already present.")
+else:
+    # Keep the blank line after the H2 (file style): marker is
+    # '## 📝 Changelog\n', so replacing it with marker+\n+ph+\n yields
+    # '## 📝 Changelog\n\n### ph\n' before the existing first entry.
+    open(path, "w", encoding="utf-8").write(text.replace(marker, marker + "\n" + ph + "\n", 1))
+    print("OK: placeholder changelog entry added — fill it in before committing (then re-run: python3 tool/gen_changelog_toc.py).")
+PY
+  fi
+  if python3 "$GEN"; then
+    echo "OK: README version TOC refreshed (gen_changelog_toc.py)."
+  else
+    echo "WARN: version TOC refresh failed — run: python3 tool/gen_changelog_toc.py"
+  fi
+fi

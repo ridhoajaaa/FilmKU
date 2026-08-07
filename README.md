@@ -405,11 +405,34 @@ flutter doctor   # Android toolchain should be green
 
 ## 📝 Changelog
 
+### `2026-08-07` — v1.3.35: transparent iOS tab capsule, stale-source retry fix, broader subtitles
+
+- **iOS: Home tab capsule no longer looks opaque.** Pixel-verified root cause:
+  the Home tab was the ONLY tab with a white `glowColor` halo, plus bright
+  posters scrolling under the capsule made the glass read solid. Removed the
+  glow and added a dark bottom-gradient scrim inside the shell so every tab
+  samples a dark backdrop — the capsule is now consistently transparent like
+  Settings/Search (golden-verified, `analyze_ios_golden.py` PASS).
+- **Player: stale-source retry fixed.** The retry-next-source path read
+  `_playableSources` left over from a PREVIOUS extraction — a retry that
+  found nothing could play an outdated/dead URL after an mpv failure. The
+  queue is now cleared at the start of hidden auto-capture and when a
+  captured stream arrives, so a failed captured stream surfaces the error UI
+  instead of retrying stale sources.
+- **Subtitles: broader YIFY/SubtitleCat coverage.** When `title + year`
+  finds nothing (old/obscure movies), the lookup now retries with the title
+  alone — films whose year differs across databases no longer show
+  "no subtitles" on a playing movie.
+- **Settings version display fixed.** `AppConstants.appVersion` now matches
+  pubspec (`1.3.35`); the Settings screen shows the real version instead of
+  the stale 1.3.32.
+
 <!-- VERSION-TOC:start -->
 
 <details>
-<summary>📜 Riwayat versi (49)</summary>
+<summary>📜 Riwayat versi (50)</summary>
 
+- [`v1.3.35`](#2026-08-07--v1335-transparent-ios-tab-capsule-stale-source-retry-fix-broader-subtitles)
 - [`v1.3.34`](#2026-08-07--v1334-home-decluttered--history-to-settings-genres-to-search)
 - [`v1.3.33`](#2026-08-07--v1333-resume--failover-root-cause-fixes)
 - [`v1.3.32`](#2026-08-07--v1332-webview-dihapus-total--5-fitur-baru--resume-benar-benar-jalan)

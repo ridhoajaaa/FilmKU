@@ -59,7 +59,49 @@ class AppShell extends StatelessWidget {
         // vivid, saturated color.
         body: ColorFiltered(
           colorFilter: const ColorFilter.matrix(_saturationBoost),
-          child: navigationShell,
+          child: Stack(
+            children: [
+              navigationShell,
+              // Bottom scrim (2026-08): the floating capsule's glass blurs
+              // whatever sits behind it — on Home, bright movie posters
+              // scrolled under the bar made the capsule look SOLID/opaque
+              // (pixel-verified: Home capsule band lum ~79 vs ~38 on
+              // Settings), while Settings/Search stayed dark-transparent.
+              // Native iOS apps fade the content to dark above the tab bar;
+              // the same gradient here guarantees the capsule always reads
+              // as transparent liquid glass on EVERY tab.
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                height: 170,
+                child: IgnorePointer(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      // Fade in fast (stops 0.0→0.45) so the whole capsule
+                      // band sits on dark, then hold at a moderate 0.75:
+                      // the pill's glass keeps sampling a dark backdrop on
+                      // EVERY tab (bright posters scrolling under the bar on
+                      // Home used to make that capsule read solid/opaque —
+                      // pixel-verified band mean ~79 vs ~38 elsewhere). The
+                      // fade is invisible above the bar; it only guarantees
+                      // the glass reads as uniform transparent liquid glass.
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        stops: const [0.0, 0.45, 1.0],
+                        colors: [
+                          Colors.transparent,
+                          Colors.black.withValues(alpha: 0.45),
+                          Colors.black.withValues(alpha: 0.75),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
         bottomNavigationBar: GlassTabBar.bottom(
           // Test hook: lets widget/golden tests measure the capsule rect so
@@ -75,10 +117,17 @@ class AppShell extends StatelessWidget {
             // the same icon for both states makes the overlap invisible;
             // selection is still shown by the indicator pill + selected
             // color + per-tab glow.
+            // NO glowColor on ANY tab (2026-08): the old white glow on the
+            // Home tab alone (0x33FFFFFF) was the pixel-verified cause of the
+            // "Home capsule looks SOLID/opaque while Settings/Search stay
+            // transparent" report — the selected Home tab drew a wide white
+            // halo across the capsule (band mean ~103 vs ~36 elsewhere),
+            // reading as a non-transparent bar. Dropping it makes the
+            // capsule read as uniform transparent liquid glass on every tab;
+            // selection stays clear via the indicator pill + label/icon color.
             GlassTab(
               icon: Icon(Icons.home_outlined),
               label: 'Home',
-              glowColor: Color(0x33FFFFFF),
             ),
             GlassTab(
               icon: Icon(Icons.search_rounded),

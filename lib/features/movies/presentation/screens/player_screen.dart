@@ -222,6 +222,16 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
     return _autoCaptureCandidates[_autoCaptureIndex];
   }
 
+  /// Direct-extraction sources that were playable when [_loadSources] ran —
+  /// kept so a FAILED mpv playback can retry the NEXT playable source instead
+  /// of erroring out (2026-08 user report: a movie whose first source's CDN
+  /// rejected mpv showed "Native playback failed" even though a later source
+  /// in the same extraction would have played). Cleared on auto-capture.
+  List<VideoSource> _playableSources = const <VideoSource>[];
+
+  /// Index into [_playableSources] of the source currently (or last) tried.
+  int _playableIndex = 0;
+
   @override
   void initState() {
     super.initState();
@@ -296,6 +306,10 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
         await _beginAutoCapture();
         return;
       }
+      // Keep the whole playable list: if mpv fails on the first source, the
+      // failure handler retries the NEXT one before showing the error UI.
+      _playableSources = playable;
+      _playableIndex = 0;
       await _initPlayer(playable.first);
     } catch (error, stackTrace) {
       // TEMP-DIAG: the provider itself threw (e.g. aggregator error) —
@@ -417,10 +431,30 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
     ref.read(watchHistoryProvider.notifier).refresh();
     if (failed == true) {
       // Native playback failed — no WebView fallback anymore (2026-08).
-      // Surface the error with Retry; a retry re-runs extraction and may
-      // resolve a fresher URL for this movie.
+      // If extraction produced MORE playable sources, retry the NEXT one
+      // (a dead first CDN used to error out even when a later source
+      // played); only when every playable source failed does the error UI
+      // with Retry appear.
+      final next = _playableIndex + 1;
+      if (next < _playableSources.length) {
+        debugPrint(
+          'FILMKU_MPV_FAILED_RETRY_NEXT '
+          '${_playableSources[_playableIndex].sourceId} -> '
+          '${_playableSources[next].sourceId}',
+        );
+        _playableIndex = next;
+        if (mounted) {
+          setState(() {
+            _loading = true;
+            _error = null;
+          });
+        }
+        await _initPlayer(_playableSources[next]);
+        return;
+      }
       debugPrint(
-        'FILMKU_MPV_FAILED_ERROR_UI source=${source.sourceId}',
+        'FILMKU_MPV_FAILED_ERROR_UI source=${source.sourceId} '
+        'playable=${_playableSources.length}',
       );
       if (mounted) {
         setState(() {
@@ -428,6 +462,8 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
           _autoCapturing = false;
           _autoCaptureCandidates = const <VideoSource>[];
           _autoCaptureIndex = 0;
+          _playableSources = const <VideoSource>[];
+          _playableIndex = 0;
           _error = 'Native playback failed for ${source.label}.\n'
               'Try again or enable more sources in Settings.';
         });
@@ -447,11 +483,21 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   /// the direct stream URL its player requests, and jump straight into the
   /// native (libmpv) player — the user never sees a WebView or its ads.
   Future<void> _beginAutoCapture() async {
+    // Drop any STALE playable-source queue left over from a PREVIOUS
+    // extraction before starting auto-capture (2026-08 review fix): a retry
+    // whose extraction yields nothing must NOT fall back into retrying the
+    // previous session's sources when the captured stream fails in mpv — the
+    // retry-next-source path reads [_playableSources] and would otherwise
+    // play an outdated/dead URL.
+    _playableSources = const <VideoSource>[];
+    _playableIndex = 0;
     var candidates = PlayerScreen.buildAutoCaptureCandidates(widget.movieId);
     if (!mounted) return;
     if (candidates.isEmpty) {
       setState(() {
         _loading = false;
+        _playableSources = const <VideoSource>[];
+        _playableIndex = 0;
         _error = 'No playable stream found for this movie.\n'
             'Try again or enable more sources in Settings.';
       });
@@ -488,6 +534,11 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   void _onAutoCaptured(WebViewNativeStream stream) {
     final source = _autoCaptureSource;
     if (!mounted) return;
+    // A captured stream is a SINGLE source — make the retry-next-source path
+    // in [_playInMpv] see an empty queue so an mpv failure on the captured
+    // stream surfaces the error UI instead of retrying stale sources.
+    _playableSources = const <VideoSource>[];
+    _playableIndex = 0;
     debugPrint(
       'FILMKU_AUTOCAPTURE_OK source=${source?.sourceId} '
       'url=${stream.url} posMs=${stream.position.inMilliseconds}',
