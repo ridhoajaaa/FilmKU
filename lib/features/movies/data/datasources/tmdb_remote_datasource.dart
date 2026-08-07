@@ -75,12 +75,37 @@ class TmdbRemoteDataSource {
   }
 
   /// Popular movies of a single genre (TMDB `/discover/movie`).
-  Future<List<MovieModel>> getMoviesByGenre(int genreId) => _fetchMovies(
+  ///
+  /// Fetches 3 pages (~60 movies) so a genre grid is actually worth browsing:
+  /// the single-page default returned only ~20 titles and a genre screen read
+  /// as "hanya sedikit film" (2026-08 user report). TMDB caps pages at 500
+  /// but a genre rarely needs more than 60 hits to fill the grid.
+  ///
+  /// Deduped by id: `sort_by=popularity.desc` re-orders LIVE between the
+  /// sequential page requests (popularity values drift), so page 1 and page 2
+  /// can overlap — without a `seen` set the grid would show duplicate cards.
+  Future<List<MovieModel>> getMoviesByGenre(int genreId) async {
+    const totalPages = 3;
+    final all = <MovieModel>[];
+    final seen = <int>{};
+    for (var page = 1; page <= totalPages; page++) {
+      final data = await _client.get(
         '/discover/movie',
-        query: {
+        queryParameters: {
           'with_genres': genreId,
           'sort_by': 'popularity.desc',
           'include_adult': false,
+          'page': page,
         },
       );
+      final results =
+          (data as Map<String, dynamic>)['results'] as List<dynamic>? ?? [];
+      if (results.isEmpty) break; // no more pages for this genre
+      for (final e in results) {
+        final movie = MovieModel.fromJson(e as Map<String, dynamic>);
+        if (seen.add(movie.id)) all.add(movie);
+      }
+    }
+    return all;
+  }
 }

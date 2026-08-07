@@ -419,6 +419,22 @@ flutter doctor   # Android toolchain should be green
 
 ## 📝 Changelog
 
+### `2026-08-07` — v1.3.34: Home decluttered — history to Settings, genres to Search
+
+- **Riwayat tontonan pindah ke Settings.** Link di Home dihapus (user: "jelek
+  banget tampilannya"); Settings kini punya section **Activity** dengan tile
+  glass (iOS) / Material (Android) yang menampilkan jumlah film pernah diputar
+  dan membuka layar history penuh.
+- **Jelajah per Genre pindah ke tab Search.** Chips genre + layar genre di
+  Home dihapus total (genre_screen.dart, genre_chips_row.dart, route `/genre`
+  dicabut). Tab Search yang kosong kini menampilkan **Jelajah per Genre**:
+  default grid Populer, tap chip genre → grid film genre tersebut.
+- **Grid genre kini penuh.** `getMoviesByGenre` mengambil **3 halaman TMDB**
+  (~60 film, dedupe by id) — dulu cuma 1 halaman (~20 film), makanya genre
+  terasa "cuma sedikit film".
+- Dead code dibersihkan: file genre yang tak terpakai + route dicabut.
+  249/249 test pass, analyze bersih.
+
 ### `2026-08-07` — v1.3.33: resume & failover root-cause fixes
 
 - **"Lanjutkan menonton" resume di-fix dua lapis.** (1) `resolveStartPosition`

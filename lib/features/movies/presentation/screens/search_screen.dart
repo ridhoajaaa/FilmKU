@@ -195,7 +195,10 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
 
   Widget _buildBody(String query, AsyncValue<List<Movie>> results) {
     if (query.trim().isEmpty) {
-      return const _EmptyState();
+      // No query yet — browse by genre instead of an empty prompt (2026-08:
+      // genre browsing moved here from Home; the grid fetches 3 TMDB pages
+      // so a genre is actually worth browsing).
+      return const _GenreBrowse();
     }
     return results.when(
       data: (movies) {
@@ -276,57 +279,154 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
   }
 }
 
-class _EmptyState extends StatelessWidget {
-  const _EmptyState();
+/// Genre browsing for the EMPTY search state (2026-08: moved here from Home
+/// — the old Home genre row read as clutter and each genre only had ~20
+/// movies). Chips list the TMDB genres; the selected one fills the grid
+/// (3 TMDB pages via [genreMoviesProvider]). Defaults to Popular so the tab
+/// is never a blank prompt.
+class _GenreBrowse extends ConsumerStatefulWidget {
+  const _GenreBrowse();
+
+  @override
+  ConsumerState<_GenreBrowse> createState() => _GenreBrowseState();
+}
+
+class _GenreBrowseState extends ConsumerState<_GenreBrowse> {
+  /// Selected genre id; null = Popular (the default grid, always full).
+  int? _selected;
+
+  void _select(int? id) => setState(() => _selected = id);
 
   @override
   Widget build(BuildContext context) {
-    // iOS: REAL liquid-glass card (shader-based). Others: plain centered copy.
-    if (Theme.of(context).platform == TargetPlatform.iOS) {
-      return const Center(
-        child: GlassContainer(
-          padding: EdgeInsets.symmetric(horizontal: 32, vertical: 28),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.search, size: 56, color: Colors.white38),
-              SizedBox(height: 12),
-              Text(
-                'Search any movie',
-                style: TextStyle(
-                  fontSize: 16,
-                  color: Colors.white70,
-                ),
-              ),
-              SizedBox(height: 4),
-              Text(
-                'Results appear as you type.',
-                style: TextStyle(fontSize: 13, color: Colors.white38),
-              ),
-            ],
+    final genres = ref.watch(genresProvider);
+    final isIos = Theme.of(context).platform == TargetPlatform.iOS;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+          child: Text(
+            'Jelajah per Genre',
+            style: TextStyle(
+              fontSize: isIos ? 17 : 19,
+              fontWeight: FontWeight.w700,
+              color: AppColors.textPrimary,
+            ),
           ),
         ),
-      );
-    }
-    return const Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(Icons.search, size: 56, color: AppColors.textMuted),
-          SizedBox(height: 12),
-          Text(
-            'Search any movie',
-            style: TextStyle(fontSize: 16, color: AppColors.textSecondary),
+        // Genre chips ("Populer" + all TMDB genres). Errors collapse
+        // silently (like the old Home row did) — the grid below still shows
+        // its own ErrorView with Retry, so a dead `genresProvider` never
+        // leaves a perpetual spinner next to a working grid.
+        genres.maybeWhen(
+          data: (list) => SizedBox(
+            height: 40,
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+              children: [
+                _FilterChip(
+                  label: 'Populer',
+                  selected: _selected == null,
+                  isIos: isIos,
+                  onTap: () => _select(null),
+                ),
+                for (final genre in list)
+                  _FilterChip(
+                    label: genre.name,
+                    selected: _selected == genre.id,
+                    isIos: isIos,
+                    onTap: () => _select(genre.id),
+                  ),
+              ],
+            ),
           ),
-          SizedBox(height: 4),
-          Text(
-            'Results appear as you type.',
-            style: TextStyle(fontSize: 13, color: AppColors.textMuted),
+          loading: () => const SizedBox(
+            height: 40,
+            child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
           ),
-        ],
-      ),
+          orElse: () => const SizedBox.shrink(),
+        ),
+        Expanded(
+          child: _selected == null
+              ? const _PopularGrid()
+              : _GenreGrid(genreId: _selected!),
+        ),
+      ],
     );
   }
+}
+
+/// The default "Populer" grid for the empty-search genre browse.
+class _PopularGrid extends ConsumerWidget {
+  const _PopularGrid();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final popular = ref.watch(popularMoviesProvider);
+    return popular.when(
+      data: (movies) => _genreGrid(context, movies),
+      error: (error, stackTrace) => ErrorView(
+        message: error.toString(),
+        onRetry: () => ref.invalidate(popularMoviesProvider),
+      ),
+      loading: () => const Center(child: CircularProgressIndicator()),
+    );
+  }
+}
+
+/// Movies of one selected genre (3 TMDB pages — see
+/// [genreMoviesProvider]/`getMoviesByGenre`).
+class _GenreGrid extends ConsumerWidget {
+  const _GenreGrid({required this.genreId});
+
+  final int genreId;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final movies = ref.watch(genreMoviesProvider(genreId));
+    return movies.when(
+      data: (list) {
+        if (list.isEmpty) {
+          return const Center(
+            child: Text(
+              'No movies in this genre.',
+              style: TextStyle(color: AppColors.textMuted),
+            ),
+          );
+        }
+        return _genreGrid(context, list);
+      },
+      error: (error, stackTrace) => ErrorView(
+        message: error.toString(),
+        onRetry: () => ref.invalidate(genreMoviesProvider(genreId)),
+      ),
+      loading: () => const Center(child: CircularProgressIndicator()),
+    );
+  }
+}
+
+/// Shared 3-column movie grid used by both the Popular default and the
+/// selected-genre grid (same delegate/padding — one source of truth).
+Widget _genreGrid(BuildContext context, List<Movie> movies) {
+  return GridView.builder(
+    padding: EdgeInsets.only(
+      left: 16,
+      right: 16,
+      top: 8,
+      bottom: Theme.of(context).platform == TargetPlatform.iOS ? 110 : 16,
+    ),
+    gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+      crossAxisCount: 3,
+      crossAxisSpacing: 12,
+      mainAxisSpacing: 16,
+      childAspectRatio: 0.52,
+    ),
+    itemCount: movies.length,
+    itemBuilder: (context, index) => MovieCard(movie: movies[index]),
+  );
 }
 
 /// Horizontal genre filter chips above the search grid — tap toggles a genre

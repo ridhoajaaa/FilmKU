@@ -8,7 +8,6 @@ import '../../features/movies/presentation/screens/search_screen.dart';
 import '../../features/movies/presentation/screens/settings_screen.dart';
 import '../../features/movies/presentation/screens/watchlist_screen.dart';
 import '../../features/movies/presentation/screens/mpv_player_screen.dart';
-import '../../features/movies/presentation/screens/genre_screen.dart';
 import '../../features/movies/presentation/screens/history_screen.dart';
 
 /// GoRouter configuration. The bottom-tab screens live inside a
@@ -73,14 +72,6 @@ final appRouter = GoRouter(
         // The Home "Lanjutkan menonton" row pushes ?resume=1 — the player
         // then resumes from the saved position on every playback path.
         resume: state.uri.queryParameters['resume'] == '1',
-      ),
-    ),
-    GoRoute(
-      path: '/genre',
-      name: 'genre',
-      builder: (context, state) => GenreScreen(
-        genreId: int.parse(state.uri.queryParameters['id'] ?? '0'),
-        genreName: state.uri.queryParameters['name'] ?? 'Genre',
       ),
     ),
     GoRoute(

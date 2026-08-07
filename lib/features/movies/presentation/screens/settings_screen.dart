@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 
 import '../../../../core/constants/app_constants.dart';
@@ -7,6 +8,7 @@ import '../../../../core/local/settings_service.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../data/datasources/stream_source_datasource.dart';
 import '../providers/settings_provider.dart';
+import '../providers/watch_history_provider.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
@@ -218,6 +220,23 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             ),
           ],
           const Divider(height: 24),
+          // Full watch history (all plays, including finished ones) — moved
+          // here from Home (2026-08 user report: the Home link looked bad).
+          // Shown only when there is something to show.
+          if (isIos)
+            GlassGroupedSection(
+              header: const _GlassSectionHeader('Activity'),
+              children: [
+                _GlassHistoryTile(
+                  onTap: () => context.push('/history'),
+                ),
+              ],
+            )
+          else ...[
+            const _SectionTitle('Activity'),
+            const _AndroidHistoryTile(),
+          ],
+          const Divider(height: 24),
           const _SectionTitle('About'),
           // iOS: REAL liquid-glass row (shader-based GlassListTile).
           // Android: classic Material ListTile.
@@ -298,6 +317,56 @@ class _GlassSectionHeader extends StatelessWidget {
           color: Color(0xFF9E9EA8),
         ),
       ),
+    );
+  }
+}
+
+/// iOS glass row that opens the full watch history screen — lives in Settings
+/// (moved from Home, 2026-08: the Home link looked bad). Shows the entry count
+/// when there is history, a hint otherwise.
+class _GlassHistoryTile extends ConsumerWidget {
+  const _GlassHistoryTile({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final count = ref.watch(watchHistoryProvider).length;
+    return GlassListTile(
+      leading: const Icon(Icons.history_rounded, color: Colors.white70),
+      title: const Text('Riwayat tontonan'),
+      subtitle: Text(
+        count == 0
+            ? 'Belum ada film yang diputar'
+            : '$count film pernah diputar',
+        style: const TextStyle(fontSize: 12, color: Colors.white54),
+      ),
+      trailing: const Icon(Icons.chevron_right_rounded, size: 20),
+      onTap: onTap,
+    );
+  }
+}
+
+/// Android ListTile that opens the full watch history screen (same move as
+/// [_GlassHistoryTile]: history lives in Settings, not Home).
+class _AndroidHistoryTile extends ConsumerWidget {
+  const _AndroidHistoryTile();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final count = ref.watch(watchHistoryProvider).length;
+    return ListTile(
+      leading: const Icon(Icons.history_rounded, color: AppColors.accent),
+      title: const Text('Riwayat tontonan'),
+      subtitle: Text(
+        count == 0
+            ? 'Belum ada film yang diputar'
+            : '$count film pernah diputar',
+        style: const TextStyle(color: AppColors.textMuted, fontSize: 13),
+      ),
+      trailing:
+          const Icon(Icons.chevron_right_rounded, color: AppColors.textMuted),
+      onTap: () => context.push('/history'),
     );
   }
 }
