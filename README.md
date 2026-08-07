@@ -419,6 +419,20 @@ flutter doctor   # Android toolchain should be green
 
 ## 📝 Changelog
 
+### `2026-08-07` — v1.3.30: fix gesture scroll + mode potret menyatu dengan deskripsi film
+
+- **Fix bug scroll gesture volume/brightness**: `details.delta` itu delta
+  INKREMENTAL per event, bukan jarak total — rumus lama menghitung dari
+  nilai awal tiap update, jadi slider cuma jitter di sekitar nilai awal
+  (tidak mengikuti jari). Sekarang jarak drag diakumulasi total dulu, baru
+  dipetakan ke nilai: geser ke atas = naik, geser ke bawah = turun.
+- **Mode potret bukan "tab kosong" lagi**: di bawah video 16:9 sekarang
+  tampil DESKRIPSI FILM sungguhan (poster, judul, tahun • durasi, rating,
+  votes, genre, tagline, sinopsis) — diambil dari provider TMDB yang sama
+  dengan halaman Detail, jadi potret terasa seperti halaman deskripsi film
+  (gaya YouTube), bukan layar kosong dengan hint.
+
+
 ### `2026-08-07` — v1.3.29: continue watching, wakelock, gesture volume/brightness, mode potret, fix versionCode
 
 - **Lanjutkan menonton**: posisi terakhir tiap film disimpan (Hive) — buka

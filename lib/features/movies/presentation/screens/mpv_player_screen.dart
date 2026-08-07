@@ -1,18 +1,24 @@
 import 'dart:async';
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
+import 'package:screen_brightness/screen_brightness.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 
+import '../../../../core/constants/api_constants.dart';
 import '../../../../core/local/watch_progress_service.dart';
 import '../../../../core/media/mini_player_service.dart';
 import '../../../../core/platform/orientation_changer.dart';
+import '../../../../core/theme/app_colors.dart';
 import '../../../../core/utils/app_logger.dart';
+import '../../../../core/utils/formatters.dart';
 import '../../data/datasources/subtitle_datasource.dart';
-import 'package:wakelock_plus/wakelock_plus.dart';
-import 'package:screen_brightness/screen_brightness.dart';
+import '../providers/movie_providers.dart';
 import '../widgets/error_view.dart';
 import '../widgets/mpv_controls_overlay.dart';
 import '../widgets/player_swipe_dismiss.dart';
@@ -892,7 +898,8 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
   }
 
   /// YouTube-style portrait inline mode: the 16:9 video box at the top with
-  /// the movie info below (title, source, a "Pop up film" hint). Swipe down
+  /// the MOVIE DESCRIPTION below (title, meta, rating, genres, overview —
+  /// the same info as the Detail screen, NOT a bare placeholder). Swipe down
   /// anywhere pops it into the floating mini player — like YouTube's small
   /// player. In fullscreen mode the player fills the screen as before.
   Widget _buildPortraitBody() {
@@ -903,53 +910,14 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
             aspectRatio: 16 / 9,
             child: _buildPlayerSurface(),
           ),
+          // Movie description below the video — fetched from TMDB via the
+          // same provider the Detail screen uses, so the portrait view is the
+          // film's real description, not a separate empty "tab".
           Expanded(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    widget.args.title,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 18,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    widget.args.sourceLabel,
-                    style: const TextStyle(
-                      color: Colors.white54,
-                      fontSize: 13,
-                    ),
-                  ),
-                  const Spacer(),
-                  const Row(
-                    children: [
-                      Icon(
-                        Icons.swipe_down_alt_rounded,
-                        color: Colors.white38,
-                        size: 20,
-                      ),
-                      SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          'Geser ke bawah untuk memunculkan mini player — '
-                          'putar terus berjalan.',
-                          style: TextStyle(
-                            color: Colors.white38,
-                            fontSize: 13,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
+            child: _PortraitMovieInfo(
+              movieId: widget.args.tmdbId,
+              fallbackTitle: widget.args.title,
+              sourceLabel: widget.args.sourceLabel,
             ),
           ),
         ],
@@ -975,6 +943,240 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
         // close stays the X button (or the system back).
         onDismiss: _minimize,
         child: _portraitMode ? _buildPortraitBody() : _buildPlayerSurface(),
+      ),
+    );
+  }
+}
+
+/// The movie description shown BELOW the video in portrait mode — the same
+/// info as the Detail screen (poster, title, year • runtime, rating, genres,
+/// overview), so the portrait view reads as the film's description page, not
+/// a separate bare tab (2026-08 user feedback). Falls back to the player's
+/// title/source when TMDB details aren't available (no API key / offline).
+class _PortraitMovieInfo extends ConsumerWidget {
+  const _PortraitMovieInfo({
+    required this.movieId,
+    required this.fallbackTitle,
+    required this.sourceLabel,
+  });
+
+  final int? movieId;
+  final String fallbackTitle;
+  final String sourceLabel;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final id = movieId;
+    if (id == null) {
+      return _fallback(fallbackTitle, sourceLabel);
+    }
+    final details = ref.watch(movieDetailsProvider(id));
+    return details.when(
+      loading: () => _fallback(fallbackTitle, sourceLabel),
+      error: (error, stackTrace) => _fallback(fallbackTitle, sourceLabel),
+      data: (data) {
+        final movie = data.movie;
+        final year = Formatters.formatDate(movie.releaseDate);
+        final runtime = Formatters.formatRuntime(data.runtime);
+        return SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 24),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(10),
+                    child: SizedBox(
+                      width: 90,
+                      height: 130,
+                      child: movie.posterPath == null
+                          ? Container(
+                              color: AppColors.surface,
+                              child: const Center(
+                                child: Icon(Icons.movie_outlined,
+                                    color: AppColors.textMuted),
+                              ),
+                            )
+                          : CachedNetworkImage(
+                              imageUrl: ApiConstants.image(
+                                  ApiConstants.posterSize, movie.posterPath!),
+                              fit: BoxFit.cover,
+                              placeholder: (context, url) => Container(
+                                color: AppColors.surface,
+                              ),
+                              errorWidget: (context, url, error) =>
+                                  Container(color: AppColors.surface),
+                            ),
+                    ),
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          movie.title,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w800,
+                            color: AppColors.textPrimary,
+                            height: 1.2,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          '$year • $runtime',
+                          style: const TextStyle(
+                            fontSize: 12.5,
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            const Icon(Icons.star,
+                                size: 16, color: AppColors.star),
+                            const SizedBox(width: 4),
+                            Text(
+                              Formatters.formatVote(movie.voteAverage),
+                              style: const TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w700,
+                                color: AppColors.textPrimary,
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            Text(
+                              '(${data.voteCount} votes)',
+                              style: const TextStyle(
+                                fontSize: 11,
+                                color: AppColors.textMuted,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          sourceLabel,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: AppColors.textMuted,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              if (data.genres.isNotEmpty) ...[
+                const SizedBox(height: 14),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: data.genres
+                      .map((genre) => Chip(
+                            label: Text(genre),
+                            backgroundColor: AppColors.surfaceLight,
+                            side: BorderSide.none,
+                            labelStyle: const TextStyle(
+                              color: AppColors.textSecondary,
+                              fontSize: 12,
+                            ),
+                          ))
+                      .toList(),
+                ),
+              ],
+              if (data.tagline != null && data.tagline!.isNotEmpty) ...[
+                const SizedBox(height: 14),
+                Text(
+                  data.tagline!,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontStyle: FontStyle.italic,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+              ],
+              const SizedBox(height: 14),
+              Text(
+                movie.overview.isEmpty
+                    ? 'No synopsis available.'
+                    : movie.overview,
+                style: const TextStyle(
+                  fontSize: 14,
+                  height: 1.5,
+                  color: AppColors.textSecondary,
+                ),
+              ),
+              const SizedBox(height: 20),
+              const Row(
+                children: [
+                  Icon(Icons.swipe_down_alt_rounded,
+                      color: AppColors.textMuted, size: 18),
+                  SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Geser ke bawah untuk memunculkan mini player — '
+                      'putar terus berjalan.',
+                      style: TextStyle(
+                        color: AppColors.textMuted,
+                        fontSize: 12.5,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  /// Bare-bones fallback when TMDB details are unavailable (no API key /
+  /// offline): the player's own title + source, so the portrait view never
+  /// looks broken.
+  Widget _fallback(String title, String sourceLabel) {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 18,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            sourceLabel,
+            style: const TextStyle(color: Colors.white54, fontSize: 13),
+          ),
+          const SizedBox(height: 16),
+          const Row(
+            children: [
+              Icon(Icons.swipe_down_alt_rounded,
+                  color: Colors.white38, size: 18),
+              SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Geser ke bawah untuk memunculkan mini player — '
+                  'putar terus berjalan.',
+                  style: TextStyle(color: Colors.white38, fontSize: 12.5),
+                ),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }

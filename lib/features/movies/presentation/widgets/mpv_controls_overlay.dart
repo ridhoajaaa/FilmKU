@@ -163,6 +163,13 @@ class _MpvControlsOverlayState extends State<MpvControlsOverlay> {
   double _dragStartValue = 0;
   double _dragFeedbackValue = 0;
 
+  /// Accumulated drag distance since [onVerticalDragStart] (px). The stream
+  /// emits `details.delta` as the INCREMENT since the last update, so the
+  /// value must be accumulated — a per-event `_dragStartValue - delta`
+  /// formula made the slider jitter around the start value instead of
+  /// following the finger (2026-08 bug report: "ada bug scroll").
+  double _dragTotalDy = 0;
+
   /// Left half of the screen = brightness; right half = volume. Exposed for
   /// tests.
   VerticalDragSide _dragSideFor(Offset pos, double width) =>
@@ -175,16 +182,19 @@ class _MpvControlsOverlayState extends State<MpvControlsOverlay> {
     _dragStartValue = _dragSide == VerticalDragSide.volume
         ? _volume
         : 100; // brightness starts at 100 (system) in this app's player
+    _dragTotalDy = 0;
     _dragFeedbackValue = _dragStartValue;
   }
 
   void _onVerticalDragUpdate(DragUpdateDetails details) {
     final side = _dragSide;
     if (side == null) return;
-    // Drag up = increase, drag down = decrease (~0.4 per px across a typical
-    // drag, so a full-screen swipe sweeps the whole range).
+    // Accumulate the incremental deltas, then map the TOTAL drag distance
+    // onto the value — drag up = increase, drag down = decrease (~0.4 per
+    // px, so a full-screen swipe sweeps the whole range).
+    _dragTotalDy += details.delta.dy;
     final next =
-        (_dragStartValue - details.delta.dy * 0.4).clamp(0.0, 100.0).toDouble();
+        (_dragStartValue - _dragTotalDy * 0.4).clamp(0.0, 100.0).toDouble();
     _dragFeedbackValue = next;
     if (side == VerticalDragSide.volume) {
       _player.setVolume(next);
