@@ -74,6 +74,20 @@ class MovieCard extends StatelessWidget {
                 // so cards in grids/rows stay cheap even if a future screen
                 // (or GlassScaffold) promotes the ambient quality.
                 quality: GlassQuality.standard,
+                // Symmetric lighting for poster cards (2026-08 user report:
+                // "poster di dalam kartu kelihatan geser ke kiri"). The
+                // package's default key light (0.75π = 135°, upper-left)
+                // paints a directional rim/specular highlight that makes the
+                // glass frame around a poster read heavier on one side — the
+                // layout itself is pixel-centered, so this was purely the
+                // lighting illusion. Straight-down light (π/2) keeps the
+                // frosted look but lights both edges identically.
+                settings: const LiquidGlassSettings(
+                  lightAngle: 1.5707963267948966, // π/2 — top light
+                  lightIntensity: 1.2, // calmer than the default 2.0
+                  ambientRim: 0,
+                  specularSharpness: GlassSpecularSharpness.soft,
+                ),
                 // Thin padding keeps the frosted rim subtle — the poster still
                 // dominates the card. The grid/list parents give tight
                 // constraints, so the inner Column just shrinks slightly.

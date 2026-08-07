@@ -163,7 +163,18 @@ class _ContinueCard extends StatelessWidget {
         onResumed();
       },
       child: isIos
-          ? GlassContainer(padding: const EdgeInsets.all(8), child: card)
+          ? GlassContainer(
+              // Same symmetric lighting as MovieCard so the whole Home grid
+              // reads consistently centered (see movie_card.dart).
+              settings: const LiquidGlassSettings(
+                lightAngle: 1.5707963267948966, // π/2 — top light
+                lightIntensity: 1.2,
+                ambientRim: 0,
+                specularSharpness: GlassSpecularSharpness.soft,
+              ),
+              padding: const EdgeInsets.all(8),
+              child: card,
+            )
           : card,
     );
   }
@@ -187,9 +198,20 @@ class _Backdrop extends StatelessWidget {
   }
 
   Widget _placeholder() => Container(
-        color: AppColors.surface,
+        // Gradient instead of a flat dark slab: history entries saved before
+        // the poster-fetch fix have a null posterPath, and a blank black box
+        // read as broken. A subtle two-tone gradient makes the card look
+        // intentional even without artwork.
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color(0xFF2C2C30), Color(0xFF141416)],
+          ),
+        ),
         child: const Center(
-          child: Icon(Icons.movie_outlined, color: AppColors.textMuted),
+          child:
+              Icon(Icons.movie_outlined, color: AppColors.textMuted, size: 30),
         ),
       );
 }

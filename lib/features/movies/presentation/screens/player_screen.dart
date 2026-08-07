@@ -232,9 +232,22 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   /// Index into [_playableSources] of the source currently (or last) tried.
   int _playableIndex = 0;
 
+  /// True once a FRESH re-extraction has been attempted after every playable
+  /// source failed in mpv — prevents an infinite invalidate→retry loop.
+  ///
+  /// 2026-08 regression: films that used to play suddenly showed "Native
+  /// playback failed". Root cause: [videoSourcesProvider] is session-cached
+  /// and CDN stream URLs are SHORT-LIVED signed URLs — replaying a movie
+  /// served the stale cached URL (signature expired / CDN now rejects it),
+  /// so mpv failed even though a FRESH extraction would produce a new,
+  /// accepted URL. One automatic fresh re-extraction before the error UI
+  /// fixes replays without any manual retry.
+  bool _reExtractionAttempted = false;
+
   @override
   void initState() {
     super.initState();
+    _reExtractionAttempted = false;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _enterLandscape();
       _loadSources();
@@ -396,6 +409,11 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
       'streamPos=${stream.position.inMilliseconds}ms '
       '-> startAt=${startAt.inMilliseconds}ms source=${source.sourceId}',
     );
+    // Poster for the continue-watching entry: awaited (bounded) so the entry
+    // is saved WITH its cover even when the play started from Home without
+    // the Detail screen ever loading (2026-08 iOS: blank covers).
+    final posterPath = await _moviePosterPath();
+    if (!mounted) return;
     final failed = await context.push<bool>(
       '/mpv-player',
       extra: MpvPlayerArgs(
@@ -420,7 +438,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
         tmdbId: widget.movieId,
         movieYear: _movieYear(),
         // Poster for the continue-watching entry (Home "Lanjutkan menonton").
-        posterPath: _moviePosterPath(),
+        posterPath: posterPath,
       ),
     );
     if (!mounted) return;
@@ -450,6 +468,21 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
           });
         }
         await _initPlayer(_playableSources[next]);
+        return;
+      }
+      // ALL playable sources failed. Before the error UI, retry with a FRESH
+      // extraction once: the provider result is session-cached and CDN URLs
+      // are short-lived signed URLs — the cached URLs may have expired since
+      // extraction (films that played fine earlier suddenly fail on replay;
+      // 2026-08 regression). Invalidate → reload produces new signed URLs.
+      if (!_reExtractionAttempted) {
+        _reExtractionAttempted = true;
+        debugPrint(
+          'FILMKU_MPV_FAILED_REEXTRACT source=${source.sourceId} '
+          '-> fresh extraction retry',
+        );
+        ref.invalidate(videoSourcesProvider(widget.movieId));
+        await _loadSources();
         return;
       }
       debugPrint(
@@ -584,14 +617,26 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
     return _movieTitleFrom(details);
   }
 
-  /// Poster path of the movie (from its TMDB details) — stored with the
-  /// watch-progress entry so the Home "Lanjutkan menonton" row can render it.
-  String? _moviePosterPath() {
+  /// Poster path of the movie — stored with the watch-progress entry so the
+  /// Home "Lanjutkan menonton" row can render it.
+  ///
+  /// 2026-08 iOS fix: playing from Home pushes the player DIRECTLY (no Detail
+  /// screen first), so [movieDetailsProvider] is often still loading when this
+  /// is read → it returned null → the continue-watching entry was saved
+  /// WITHOUT a poster (iOS rows showed blank covers while Android — whose flow
+  /// had already loaded details — showed them). Fetching the provider future
+  /// with a bounded timeout guarantees a poster on the FIRST play too.
+  Future<String?> _moviePosterPath() async {
     final details = ref.read(movieDetailsProvider(widget.movieId));
-    if (details is AsyncData) {
-      return details.value?.movie.posterPath;
+    if (details is AsyncData) return details.value?.movie.posterPath;
+    try {
+      final loaded = await ref
+          .read(movieDetailsProvider(widget.movieId).future)
+          .timeout(const Duration(seconds: 5));
+      return loaded.movie.posterPath;
+    } catch (_) {
+      return null;
     }
-    return null;
   }
 
   /// Release year of the movie (from its TMDB release date) — passed to the

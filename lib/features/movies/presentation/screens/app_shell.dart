@@ -57,51 +57,19 @@ class AppShell extends StatelessWidget {
         // whatever sits behind the frosted panels — apply the same treatment
         // to the whole shell body so the capsule's backdrop blur picks up
         // vivid, saturated color.
+        // NOTE: no bottom scrim here. The v1.3.35 dark gradient that faded
+        // content to black under the capsule read as a SOLID BLACK BAND under
+        // the bar on Home (bright posters contrast against it), making the
+        // capsule look welded to a black block instead of floating. On
+        // Settings/Search the backdrop is already dark so the scrim was
+        // invisible there — the inconsistency the user saw (2026-08). The
+        // real fix for the capsule reading opaque was removing the Home tab's
+        // white glow (done in v1.3.35); with the glow gone the glass samples
+        // whatever scrolls under it and reads as a genuine floating layer on
+        // every tab, exactly like the Settings/Search capsules.
         body: ColorFiltered(
           colorFilter: const ColorFilter.matrix(_saturationBoost),
-          child: Stack(
-            children: [
-              navigationShell,
-              // Bottom scrim (2026-08): the floating capsule's glass blurs
-              // whatever sits behind it — on Home, bright movie posters
-              // scrolled under the bar made the capsule look SOLID/opaque
-              // (pixel-verified: Home capsule band lum ~79 vs ~38 on
-              // Settings), while Settings/Search stayed dark-transparent.
-              // Native iOS apps fade the content to dark above the tab bar;
-              // the same gradient here guarantees the capsule always reads
-              // as transparent liquid glass on EVERY tab.
-              Positioned(
-                left: 0,
-                right: 0,
-                bottom: 0,
-                height: 170,
-                child: IgnorePointer(
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      // Fade in fast (stops 0.0→0.45) so the whole capsule
-                      // band sits on dark, then hold at a moderate 0.75:
-                      // the pill's glass keeps sampling a dark backdrop on
-                      // EVERY tab (bright posters scrolling under the bar on
-                      // Home used to make that capsule read solid/opaque —
-                      // pixel-verified band mean ~79 vs ~38 elsewhere). The
-                      // fade is invisible above the bar; it only guarantees
-                      // the glass reads as uniform transparent liquid glass.
-                      gradient: LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        stops: const [0.0, 0.45, 1.0],
-                        colors: [
-                          Colors.transparent,
-                          Colors.black.withValues(alpha: 0.45),
-                          Colors.black.withValues(alpha: 0.75),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
+          child: navigationShell,
         ),
         bottomNavigationBar: GlassTabBar.bottom(
           // Test hook: lets widget/golden tests measure the capsule rect so

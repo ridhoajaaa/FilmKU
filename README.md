@@ -405,6 +405,35 @@ flutter doctor   # Android toolchain should be green
 
 ## 📝 Changelog
 
+### `2026-08-08` — v1.3.36: cards finally read centered, continue-watching covers fixed
+
+- **iOS: poster di kartu sekarang terbaca center.** Pixel-verified: layout
+  poster vs bingkai kartu sudah simetris (delta 0.0px), tapi shader glass
+  memakai *key light* diagonal 135° (kiri-atas) sehingga rim highlight kartu
+  asimetris — bingkai terlihat lebih berat di satu sisi dan poster terkesan
+  geser kiri (screenshot user: "poster dalam kartunya agak kekiri").
+  Kartu film (MovieCard) dan kartu Lanjutkan menonton sekarang memakai
+  cahaya vertikal (π/2) + specular soft + lightIntensity lebih rendah —
+  kedua tepi kartu sama-sama terang, poster benar-benar center di layar.
+- **iOS: cover Lanjutkan menonton tidak hilang lagi.** Play dari Home
+  langsung push player tanpa lewat layar Detail dulu → `posterPath` masih
+  null saat progress disimpan (Android kebetulan kena timing lain). Sekarang
+  detail film di-fetch dulu (timeout 5 detik) sebelum player dibuka, jadi
+  entri baru selalu punya cover. Entri lama yang sudah terlanjur tanpa cover
+  sekarang dapat placeholder gradient dua warna (bukan kotak hitam kosong).
+- **Player: re-extraction saat semua source gagal.** URL CDN signed bisa
+  basi/kedaluwarsa → film yang tadinya jalan tiba-tiba "native playback
+  failed". Sebelum menyerah ke error UI, pipeline sekarang meng-invalidate
+  provider dan ekstraksi ulang sekali untuk mendapat URL baru.
+- **iOS: header Home overflow 72px fixed.** Tagline "No Ads • No Popups"
+  di glass header memaksa lebar melebihi panel (RenderFlex overflow di
+  kanan) — kini `Flexible` + ellipsis, header tidak terpotong lagi.
+- **iOS: kapsul tab benar-benar floating.** Scrim gradien hitam yang
+ditambahkan v1.3.35 dihapus — di Home (poster terang) scrim terbaca sebagai
+blok hitam di bawah kapsul, kontras dengan Settings/Search yang gelap.
+Semua tab sekarang konsisten mengambang bebas.
+
+
 ### `2026-08-07` — v1.3.35: transparent iOS tab capsule, stale-source retry fix, broader subtitles
 
 - **iOS: Home tab capsule no longer looks opaque.** Pixel-verified root cause:
@@ -430,8 +459,9 @@ flutter doctor   # Android toolchain should be green
 <!-- VERSION-TOC:start -->
 
 <details>
-<summary>📜 Riwayat versi (50)</summary>
+<summary>📜 Riwayat versi (51)</summary>
 
+- [`v1.3.36`](#2026-08-08--v1336-cards-finally-read-centered-continue-watching-covers-fixed)
 - [`v1.3.35`](#2026-08-07--v1335-transparent-ios-tab-capsule-stale-source-retry-fix-broader-subtitles)
 - [`v1.3.34`](#2026-08-07--v1334-home-decluttered--history-to-settings-genres-to-search)
 - [`v1.3.33`](#2026-08-07--v1333-resume--failover-root-cause-fixes)

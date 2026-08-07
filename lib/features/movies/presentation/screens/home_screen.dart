@@ -127,12 +127,21 @@ class _HeaderBanner extends StatelessWidget {
                 ),
               ),
               Spacer(),
-              Text(
-                'No Ads • No Popups',
-                style: TextStyle(
-                  fontSize: 12,
-                  color: Colors.white54,
-                  fontWeight: FontWeight.w500,
+              // Flexible + ellipsis: on narrow screens / larger system fonts
+              // the raw Text overflowed the glass row (pixel-verified 72px
+              // RenderFlex overflow in the iOS header — the tagline pushed
+              // past the 326px inner width and clipped on the right, which
+              // also read as the header content sitting off-center).
+              Flexible(
+                child: Text(
+                  'No Ads • No Popups',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.white54,
+                    fontWeight: FontWeight.w500,
+                  ),
                 ),
               ),
             ],
@@ -156,12 +165,16 @@ class _HeaderBanner extends StatelessWidget {
             ),
           ),
           Spacer(),
-          Text(
-            'No Ads • No Popups',
-            style: TextStyle(
-              fontSize: 12,
-              color: AppColors.textMuted,
-              fontWeight: FontWeight.w500,
+          Flexible(
+            child: Text(
+              'No Ads • No Popups',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 12,
+                color: AppColors.textMuted,
+                fontWeight: FontWeight.w500,
+              ),
             ),
           ),
         ],
