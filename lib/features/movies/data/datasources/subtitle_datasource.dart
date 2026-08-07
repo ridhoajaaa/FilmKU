@@ -88,12 +88,27 @@ class SubtitleCatLink {
 /// playback.
 /// ---------------------------------------------------------------------------
 class SubtitleDatasource {
-  SubtitleDatasource({ApiClient? tmdb, Dio? dio})
-      : _tmdb = tmdb ?? ApiClient(),
+  SubtitleDatasource({
+    ApiClient? tmdb,
+    Dio? dio,
+    this.yifyTimeout = const Duration(seconds: 15),
+    this.subcatTimeout = const Duration(seconds: 25),
+  })  : _tmdb = tmdb ?? ApiClient(),
         _dio = dio ?? _createDio();
 
   final ApiClient _tmdb;
   final Dio _dio;
+
+  /// Per-source budget for the YIFY chain. The Cloudflare-protected page +
+  /// .zip (4 sequential HTTP calls) can hang for the full per-request receive
+  /// timeout on mobile networks — bounding it keeps a hung YIFY from eating
+  /// the caller's whole budget while SubtitleCat (which finishes in seconds)
+  /// still gets picked. Injectable for tests.
+  final Duration yifyTimeout;
+
+  /// Per-source budget for the SubtitleCat chain (search + up to 8 release
+  /// detail pages). Injectable for tests.
+  final Duration subcatTimeout;
 
   static Dio _createDio() {
     return Dio(
@@ -111,24 +126,24 @@ class SubtitleDatasource {
   }
 
   /// Fetches the best available subtitle for [tmdbId]: Indonesian first,
-  /// English as fallback, across both providers (YIFY then SubtitleCat).
-  /// Returns null when neither source has a usable subtitle for the movie,
-  /// or ANY network/parse error occurs.
+  /// English as fallback, across both providers, raced in PARALLEL.
+  /// Returns null when neither source has a usable subtitle for the movie.
+  ///
+  /// 2026-08 on-device root cause (Supergirl on iOS): the OLD sequential
+  /// order ran YIFY first (4 HTTP calls incl. a Cloudflare-protected .zip
+  /// that can hang or 403 on mobile networks). A slow/erroring YIFY chain
+  /// consumed the whole caller budget or threw, the outer catch returned
+  /// null, and SubtitleCat — which HAD the Indonesian subtitle — never ran.
+  /// Racing both sources means whichever resolves first wins and one source
+  /// failing can never cancel the other.
   Future<SubtitleInfo?> fetchSubtitle(int tmdbId) async {
-    try {
-      final imdbId = await _fetchImdbId(tmdbId);
-      if (imdbId != null) {
-        final yify = await _fetchFromYify(imdbId);
-        if (yify != null) return yify;
-      }
-      // Explicit `await` is REQUIRED: `return _fetchFromSubtitleCatByTmdb(...)`
-      // (implicit return-await) would let a CDN 404 escape the try/catch —
-      // Dart only routes errors through an enclosing catch for EXPLICIT
-      // awaits (verified empirically 2026-08).
-      return await _fetchFromSubtitleCatByTmdb(tmdbId);
-    } catch (_) {
-      return null;
-    }
+    final results = await Future.wait(<Future<SubtitleInfo?>>[
+      _fetchYifyBestEffort(tmdbId: tmdbId)
+          .timeout(yifyTimeout, onTimeout: () => null),
+      _fetchSubcatBestEffort(tmdbId: tmdbId)
+          .timeout(subcatTimeout, onTimeout: () => null),
+    ]);
+    return _pickBest(results[0], results[1]);
   }
 
   /// Fetches the best available subtitle using movie metadata the CALLER
@@ -140,12 +155,35 @@ class SubtitleDatasource {
   /// (requires an API key, which may be absent on some builds — the 2026-08
   /// reason iOS builds showed "no subtitles" while the laptop probe worked).
   ///
-  /// Indonesian first, English as fallback; any network/parse error returns
-  /// null (subtitles must never break playback).
+  /// Indonesian first, English as fallback. YIFY and SubtitleCat run in
+  /// PARALLEL with per-source error isolation (see [fetchSubtitle]) so a slow
+  /// or failing Cloudflare-protected YIFY chain can never starve SubtitleCat
+  /// out of the caller's timeout budget. Any failure returns null (subtitles
+  /// must never break playback).
   Future<SubtitleInfo?> fetchSubtitleFromMeta({
     int? tmdbId,
     String? title,
     String? year,
+    String? imdbId,
+  }) async {
+    final results = await Future.wait(<Future<SubtitleInfo?>>[
+      _fetchYifyBestEffort(tmdbId: tmdbId, imdbId: imdbId)
+          .timeout(yifyTimeout, onTimeout: () => null),
+      _fetchSubcatBestEffort(
+        tmdbId: tmdbId,
+        title: title,
+        year: year,
+      ).timeout(subcatTimeout, onTimeout: () => null),
+    ]);
+    return _pickBest(results[0], results[1]);
+  }
+
+  /// YIFY chain wrapped so ANY failure returns null instead of cancelling
+  /// the parallel SubtitleCat search (the 2026-08 "no subtitles even though
+  /// SubtitleCat had one" bug: YIFY threw/timeout → outer catch → null →
+  /// SubtitleCat never ran).
+  Future<SubtitleInfo?> _fetchYifyBestEffort({
+    int? tmdbId,
     String? imdbId,
   }) async {
     try {
@@ -153,28 +191,55 @@ class SubtitleDatasource {
       if (resolvedImdb == null && tmdbId != null) {
         resolvedImdb = await _fetchImdbId(tmdbId);
       }
-      if (resolvedImdb != null) {
-        final yify = await _fetchFromYify(resolvedImdb);
-        if (yify != null) return yify;
-      }
-      // YIFY had nothing (or no IMDB id) — SubtitleCat only needs the title
-      // (+ year), so it works with no TMDB key when the caller passes the
-      // metadata (the common case from the movie object in the UI).
+      if (resolvedImdb == null) return null;
+      return await _fetchFromYify(resolvedImdb);
+    } catch (_) {
+      // YIFY must never cancel SubtitleCat — return null, let the caller
+      // pick whatever the other parallel source found.
+      return null;
+    }
+  }
+
+  /// SubtitleCat chain wrapped so ANY failure returns null instead of
+  /// cancelling the parallel YIFY search.
+  Future<SubtitleInfo?> _fetchSubcatBestEffort({
+    int? tmdbId,
+    String? title,
+    String? year,
+  }) async {
+    try {
+      // SubtitleCat only needs the title (+ year) — works with no TMDB key
+      // when the caller passes the metadata (the common case from the movie
+      // object in the UI).
       if (title != null && title.trim().isNotEmpty) {
         final subcat = await _fetchFromSubtitleCat(title, year: year);
         if (subcat != null) return subcat;
       }
-      // Last resort: TMDB-only lookups (title via TMDB for SubtitleCat).
-      // Explicit `await` (see fetchSubtitle): implicit return-await would
-      // let a CDN 404 escape the try/catch.
+      // Last resort: TMDB-only lookup (title via TMDB for SubtitleCat).
       if (tmdbId != null) {
         return await _fetchFromSubtitleCatByTmdb(tmdbId);
       }
       return null;
     } catch (_) {
-      // Best-effort — subtitles must never break playback.
       return null;
     }
+  }
+
+  /// Picks the best subtitle of the two parallel results: Indonesian first
+  /// (either source), then English, then whatever exists. Null when neither
+  /// source produced anything.
+  static SubtitleInfo? _pickBest(SubtitleInfo? a, SubtitleInfo? b) {
+    final candidates = <SubtitleInfo>[
+      if (a != null) a,
+      if (b != null) b,
+    ];
+    if (candidates.isEmpty) return null;
+    for (final language in const <String>['id', 'en']) {
+      for (final candidate in candidates) {
+        if (candidate.language == language) return candidate;
+      }
+    }
+    return candidates.first;
   }
 
   /// YIFY flow: IMDB page → subtitle entries → detail page → `.zip` download

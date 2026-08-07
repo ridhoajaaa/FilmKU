@@ -405,6 +405,26 @@ flutter doctor   # Android toolchain should be green
 
 ## 📝 Changelog
 
+### `2026-08-08` — v1.3.37: subtitles finally appear again (parallel YIFY + SubtitleCat)
+
+- **Subtitle root cause fixed (on-device Supergirl report):** the subtitle
+  pipeline ran YIFY first, SEQUENTIALLY — YIFY's Cloudflare-protected page
+  + `.zip` (4 HTTP calls) can hang or fail on mobile networks, and one
+  failure made the outer `catch` return null so **SubtitleCat — which had
+  the Indonesian subtitle — never ran**. Live probes proved the data exists
+  (SubtitleCat detail pages carry `-id.srt` for Supergirl on the FIRST
+  search hit) yet the device showed "Subtitel tidak ditemukan".
+- **Fix:** YIFY and SubtitleCat now run in PARALLEL with per-source error
+  isolation + per-source timeouts (YIFY 15s, SubtitleCat 25s). Either source
+  failing or hanging can never cancel the other; the best result wins
+  (Indonesian → English → any). Both `fetchSubtitle` and the keyless
+  `fetchSubtitleFromMeta` path got the same treatment.
+- **3 regression tests added:** YIFY throws → SubtitleCat wins; YIFY hangs
+  past its budget → SubtitleCat wins fast; SubtitleCat errors → YIFY wins.
+- Kept `tool/simulate_subcat.py` — the live-simulation script that proved
+  the data existed (search page → first 8 release pages → Indonesian SRT).
+
+
 ### `2026-08-08` — v1.3.36: cards finally read centered, continue-watching covers fixed
 
 - **iOS: poster di kartu sekarang terbaca center.** Pixel-verified: layout
@@ -459,8 +479,9 @@ Semua tab sekarang konsisten mengambang bebas.
 <!-- VERSION-TOC:start -->
 
 <details>
-<summary>📜 Riwayat versi (51)</summary>
+<summary>📜 Riwayat versi (52)</summary>
 
+- [`v1.3.37`](#2026-08-08--v1337-subtitles-finally-appear-again-parallel-yify--subtitlecat)
 - [`v1.3.36`](#2026-08-08--v1336-cards-finally-read-centered-continue-watching-covers-fixed)
 - [`v1.3.35`](#2026-08-07--v1335-transparent-ios-tab-capsule-stale-source-retry-fix-broader-subtitles)
 - [`v1.3.34`](#2026-08-07--v1334-home-decluttered--history-to-settings-genres-to-search)

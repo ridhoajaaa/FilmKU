@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -10,9 +11,23 @@ import 'package:filmku/features/movies/data/datasources/subtitle_datasource.dart
 
 /// Serves canned responses keyed by request URI PATH (ignores query params).
 class _FakeSubAdapter implements HttpClientAdapter {
-  _FakeSubAdapter(this.responses);
+  _FakeSubAdapter(
+    this.responses, {
+    this.throwing = const <String>{},
+    this.hanging = const <String>{},
+  });
 
   final Map<String, ResponseBody> responses;
+
+  /// Paths that simulate a hard network failure (DioException) — e.g. the
+  /// Cloudflare-protected YIFY chain failing on-device. Lets tests prove one
+  /// source failing can never cancel the other parallel source.
+  final Set<String> throwing;
+
+  /// Paths that NEVER complete — simulates a hung source. Lets tests prove
+  /// the per-source timeout bounds a hung YIFY chain so SubtitleCat's result
+  /// still wins.
+  final Set<String> hanging;
 
   /// Every request path this adapter served — lets tests assert that the
   /// keyless metadata path makes NO TMDB request at all.
@@ -31,6 +46,18 @@ class _FakeSubAdapter implements HttpClientAdapter {
   ) async {
     hits.add(options.uri.path);
     referers[options.uri.path] = options.headers['Referer'] as String?;
+    if (throwing.contains(options.uri.path)) {
+      throw DioException(
+        requestOptions: options,
+        type: DioExceptionType.connectionError,
+        message: 'simulated CDN failure',
+      );
+    }
+    if (hanging.contains(options.uri.path)) {
+      // Never completes — exactly like a server that never answers (the
+      // async flattening of `return Future.never` is not available here).
+      return Completer<ResponseBody>().future;
+    }
     final hit = responses[options.uri.path];
     if (hit != null) return hit;
     return ResponseBody.fromString('not found', 404);
@@ -475,16 +502,25 @@ void main() {
 
   group('SubtitleDatasource.fetchSubtitleFromMeta (keyless metadata path)', () {
     (SubtitleDatasource, _FakeSubAdapter, _FakeSubAdapter) buildKeyless(
-      Map<String, ResponseBody> yifyResponses,
-    ) {
+      Map<String, ResponseBody> yifyResponses, {
+      Set<String> throwing = const <String>{},
+      Set<String> hanging = const <String>{},
+      Duration? yifyTimeout,
+      Duration? subcatTimeout,
+    }) {
       // TMDB adapter starts EMPTY — any TMDB request would 404 and the test
       // asserts NONE happened (the metadata path must be keyless).
       final tmdbDio = Dio()..httpClientAdapter = _FakeSubAdapter({});
       final yifyDio = Dio(
         BaseOptions(responseType: ResponseType.bytes),
-      )..httpClientAdapter = _FakeSubAdapter(yifyResponses);
-      final ds =
-          SubtitleDatasource(tmdb: ApiClient(dio: tmdbDio), dio: yifyDio);
+      )..httpClientAdapter =
+          _FakeSubAdapter(yifyResponses, throwing: throwing, hanging: hanging);
+      final ds = SubtitleDatasource(
+        tmdb: ApiClient(dio: tmdbDio),
+        dio: yifyDio,
+        yifyTimeout: yifyTimeout ?? const Duration(seconds: 15),
+        subcatTimeout: subcatTimeout ?? const Duration(seconds: 25),
+      );
       return (
         ds,
         tmdbDio.httpClientAdapter as _FakeSubAdapter,
@@ -545,6 +581,80 @@ void main() {
         () async {
       final (ds, _, _) = buildKeyless({});
       expect(await ds.fetchSubtitleFromMeta(), isNull);
+    });
+
+    test(
+        'SubtitleCat still wins when the YIFY chain THROWS '
+        '(2026-08 Supergirl on-device fix)', () async {
+      final (ds, _, _) = buildKeyless(
+        {
+          '/index.php': ResponseBody.fromBytes(utf8.encode(_scSearchPage), 200),
+          '/subs/1532/Spider-Man-No-Way-Home-2021-1080p-YTS.html':
+              ResponseBody.fromBytes(utf8.encode(_scDetailPage), 200),
+          '/subs/1582/Spider-Man-No-Way-Home-2021-id.srt':
+              ResponseBody.fromBytes(utf8.encode(_scSrtContent), 200),
+        },
+        // The YIFY movie page fails like Cloudflare on mobile — the OLD
+        // sequential code's outer catch then returned null and SubtitleCat
+        // never ran, the exact "no subtitles although one exists" report.
+        throwing: {'/movie-imdb/tt10872600'},
+      );
+      final sub = await ds.fetchSubtitleFromMeta(
+        title: 'Supergirl',
+        year: '1984',
+        imdbId: 'tt10872600',
+      );
+      expect(sub, isNotNull);
+      expect(sub!.language, 'id');
+      expect(sub.data, _scSrtContent); // SubtitleCat's content, not YIFY's.
+    });
+
+    test('SubtitleCat wins when YIFY HANGS past its per-source budget',
+        () async {
+      final (ds, _, _) = buildKeyless(
+        {
+          '/index.php': ResponseBody.fromBytes(utf8.encode(_scSearchPage), 200),
+          '/subs/1532/Spider-Man-No-Way-Home-2021-1080p-YTS.html':
+              ResponseBody.fromBytes(utf8.encode(_scDetailPage), 200),
+          '/subs/1582/Spider-Man-No-Way-Home-2021-id.srt':
+              ResponseBody.fromBytes(utf8.encode(_scSrtContent), 200),
+        },
+        // The YIFY page never answers (Cloudflare challenge hang on mobile).
+        hanging: {'/movie-imdb/tt10872600'},
+        yifyTimeout: const Duration(milliseconds: 50),
+      );
+      final sw = Stopwatch()..start();
+      final sub = await ds.fetchSubtitleFromMeta(
+        title: 'Supergirl',
+        year: '1984',
+        imdbId: 'tt10872600',
+      );
+      sw.stop();
+      expect(sub, isNotNull);
+      expect(sub!.language, 'id');
+      expect(sub.data, _scSrtContent);
+      // The hung YIFY was bounded by its per-source timeout — the whole
+      // fetch returns promptly instead of blocking forever.
+      expect(sw.elapsed, lessThan(const Duration(seconds: 2)));
+    });
+
+    test('YIFY still wins when SubtitleCat errors (symmetric isolation)',
+        () async {
+      final (ds, _, _) = buildKeyless(
+        {
+          '/movie-imdb/tt10872600':
+              ResponseBody.fromBytes(utf8.encode(_moviePage), 200),
+          '/subtitles/spider-man-no-way-home-2021-indonesian-yify-395314':
+              ResponseBody.fromBytes(utf8.encode(_detailPage), 200),
+          '/subtitle/spider-man-no-way-home-2021-indonesian-yify-395314.zip':
+              ResponseBody.fromBytes(_buildZip(), 200),
+        },
+        throwing: {'/index.php'},
+      );
+      final sub = await ds.fetchSubtitleFromMeta(imdbId: 'tt10872600');
+      expect(sub, isNotNull);
+      expect(sub!.language, 'id');
+      expect(sub.data, _srtContent); // YIFY's content.
     });
   });
 }
