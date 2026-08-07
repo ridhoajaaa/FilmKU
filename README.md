@@ -387,36 +387,6 @@ flutter doctor   # Android toolchain should be green
 
 ---
 
-### `2026-08-05` — v1.3.17: mini player root-cause fix (illegal Positioned) + X always pressable + relay subtitle fix
-
-- **Mini player root cause finally found.** A probe test proved the floating
-  window's `Stack > LayoutBuilder > Positioned` structure is ILLEGAL in
-  Flutter (ParentDataWidget corruption) — in release builds that silently
-  broke the layout: the mini player rendered mid-screen and its video surface
-  could cover the whole screen with a blank/white texture that ate every
-  touch (the "white 50% screen, must force-quit" bug). The overlay now
-  returns a DIRECT `Positioned` (a direct child of the app-level Stack) with
-  the anchor computed from `MediaQuery` size — bottom-right in every
-  orientation, following rotation. Reveal is delayed 800ms (past the route
-  pop) and expanding waits for the end of frame so the mini Video unmounts
-  before the fullscreen Video mounts (two Videos must never share a
-  controller in the same frame).
-- **Close X always pressable.** The full-screen failure overlays (auto-switch
-  notice + "Native playback failed") covered the always-visible top bar.
-  They are now compact centered cards: the X / PiP stay usable and the video
-  stays visible behind them.
-- **Subtitle support through the HLS relay fixed.** WebVTT subtitle chunks
-  are now served with a `text/vtt` content type (before: everything
-  non-playlist was served as `video/mp2t`, which could make the player
-  reject external subtitle tracks). Embedded subtitles inside the TS
-  segments were already passed through untouched.
-- **Diagnostics:** every session logs `FILMKU_MPV_TRACKS` with the real
-  video/audio/subtitle track counts — the honest answer to "why no
-  subtitles" (many 2vcdn streams carry NO subtitle track at all; the log
-  proves which case you are in).
-- New `test/mini_player_position_test.dart` (5 tests: portrait/landscape
-  anchor, drag clamps, delta preservation). 190/190 tests pass, analyze clean.
-
 ## 📝 Changelog
 
 ### `2026-08-07` — v1.3.34: Home decluttered — history to Settings, genres to Search
@@ -762,6 +732,36 @@ flutter doctor   # Android toolchain should be green
   **198/198 tests pass**, analyze clean.
 
 
+### `2026-08-05` — v1.3.17: mini player root-cause fix (illegal Positioned) + X always pressable + relay subtitle fix
+
+- **Mini player root cause finally found.** A probe test proved the floating
+  window's `Stack > LayoutBuilder > Positioned` structure is ILLEGAL in
+  Flutter (ParentDataWidget corruption) — in release builds that silently
+  broke the layout: the mini player rendered mid-screen and its video surface
+  could cover the whole screen with a blank/white texture that ate every
+  touch (the "white 50% screen, must force-quit" bug). The overlay now
+  returns a DIRECT `Positioned` (a direct child of the app-level Stack) with
+  the anchor computed from `MediaQuery` size — bottom-right in every
+  orientation, following rotation. Reveal is delayed 800ms (past the route
+  pop) and expanding waits for the end of frame so the mini Video unmounts
+  before the fullscreen Video mounts (two Videos must never share a
+  controller in the same frame).
+- **Close X always pressable.** The full-screen failure overlays (auto-switch
+  notice + "Native playback failed") covered the always-visible top bar.
+  They are now compact centered cards: the X / PiP stay usable and the video
+  stays visible behind them.
+- **Subtitle support through the HLS relay fixed.** WebVTT subtitle chunks
+  are now served with a `text/vtt` content type (before: everything
+  non-playlist was served as `video/mp2t`, which could make the player
+  reject external subtitle tracks). Embedded subtitles inside the TS
+  segments were already passed through untouched.
+- **Diagnostics:** every session logs `FILMKU_MPV_TRACKS` with the real
+  video/audio/subtitle track counts — the honest answer to "why no
+  subtitles" (many 2vcdn streams carry NO subtitle track at all; the log
+  proves which case you are in).
+- New `test/mini_player_position_test.dart` (5 tests: portrait/landscape
+  anchor, drag clamps, delta preservation). 190/190 tests pass, analyze clean.
+
 ### `2026-08-05` — v1.3.16: subtitles back (libass) + mini-player/expand/X fixes
 
 - **Embedded subtitles finally render again.** media_kit's mpv defaults
@@ -891,8 +891,6 @@ flutter doctor   # Android toolchain should be green
 - New unit tests: jsUnescape, radixToBase (36), packer decode, stream-path regex, PNG-strip
   (70-byte wrapper / non-PNG passthrough), relay playlist rewrite. E2E tool `tool/relay_e2e_standalone.dart`
   retained for re-verification.
-
-### `2026-08-05` — v1.3.10: neutralise 2vcdn anti-framing guard — JW player requests its m3u8 on iOS
 
 ### `2026-08-05` — v1.3.10: neutralise the 2vcdn anti-framing guard — JW player finally requests its m3u8 on iOS
 
