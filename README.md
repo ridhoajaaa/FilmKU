@@ -419,6 +419,21 @@ flutter doctor   # Android toolchain should be green
 
 ## 📝 Changelog
 
+### `2026-08-07` — v1.3.31: Continue-watching resumes on EVERY playback path
+
+- **Bug fix (root cause):** replaying a movie from the Home "Lanjutkan
+  menonton" row always restarted from the beginning whenever the stream
+  came from hidden auto-capture or a WebView handoff. The saved position
+  was only applied on the direct-extraction path; the other two paths hand
+  the mpv player a zero-position stream, so mpv always started at 0.
+- **Fix:** `PlayerScreen.resolveStartPosition` is now the single source of
+  truth in `_playInMpv` — the stream's own position wins (a WebView handoff
+  that already played carries its real position), otherwise the saved
+  continue-watching position resumes where the user left off. Direct
+  extraction, auto-capture and WebView handoff now all resume identically.
+- Tests: `test/player_resume_test.dart` (5 cases — stream wins, saved
+  fallback, both zero, stale save never overrides a live position).
+
 ### `2026-08-07` — v1.3.30: fix gesture scroll + mode potret menyatu dengan deskripsi film
 
 - **Fix bug scroll gesture volume/brightness**: `details.delta` itu delta

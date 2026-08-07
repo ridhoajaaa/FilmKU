@@ -174,6 +174,25 @@ class PlayerScreen extends ConsumerStatefulWidget {
     return live;
   }
 
+  /// Resolves where a stream handed to the mpv player should start.
+  ///
+  /// The incoming [streamPosition] wins when it is non-zero (a WebView
+  /// handoff that was already playing carries its real position). Otherwise
+  /// the saved continue-watching [savedPosition] is used — so replaying a
+  /// movie from the Home "Lanjutkan menonton" row resumes even when the
+  /// stream came from hidden auto-capture or a WebView handoff (both start
+  /// at zero; the OLD code only resumed on the direct-extraction path, so
+  /// auto-capture/WebView movies always restarted from 0 — 2026-08 report).
+  /// Exposed for tests.
+  @visibleForTesting
+  static Duration resolveStartPosition({
+    required Duration streamPosition,
+    required Duration? savedPosition,
+  }) =>
+      streamPosition > Duration.zero
+          ? streamPosition
+          : (savedPosition ?? Duration.zero);
+
   /// Builds the HTTP headers mpv should send to the stream CDN.
   ///
   /// 2026-08 iOS root cause: the signed 2embed/vidlink CDN URLs reject
@@ -356,19 +375,13 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
       _error = null;
     });
 
-    // Continue-watching: resume from the saved position when there is one.
-    final saved = WatchProgressService.instance.get(widget.movieId);
-    final startAt = saved?.position ?? Duration.zero;
-    if (startAt > Duration.zero) {
-      debugPrint(
-        'FILMKU_PLAYER_RESUME movieId=${widget.movieId} '
-        'at=${startAt.inMilliseconds}ms',
-      );
-    }
-
     debugPrint('FILMKU_PLAYER_DIRECT source=${source.sourceId} url=$url');
     await _playInMpv(
-      WebViewNativeStream(url: url, position: startAt),
+      // Position resolved centrally in [_playInMpv] (stream position wins,
+      // saved continue-watching position is the fallback) so EVERY entry
+      // path — direct extraction, hidden auto-capture, WebView handoff —
+      // resumes identically.
+      WebViewNativeStream(url: url, position: Duration.zero),
       source,
     );
   }
@@ -442,13 +455,31 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   /// the visible WebView so the movie keeps playing.
   Future<void> _playInMpv(
       WebViewNativeStream stream, VideoSource source) async {
+    // Continue-watching resume: the stream's own position wins (a WebView
+    // handoff that already played carries its real position); otherwise the
+    // SAVED position resumes the movie where the user left off. This is the
+    // single source of truth for every entry path — direct extraction,
+    // hidden auto-capture and WebView handoff all funnel through here, so a
+    // "Lanjutkan menonton" replay always resumes (2026-08: it restarted at
+    // 0 whenever the direct-extraction path wasn't used).
+    final startAt = PlayerScreen.resolveStartPosition(
+      streamPosition: stream.position,
+      savedPosition:
+          WatchProgressService.instance.get(widget.movieId)?.position,
+    );
+    if (startAt > Duration.zero) {
+      debugPrint(
+        'FILMKU_PLAYER_RESUME movieId=${widget.movieId} '
+        'at=${startAt.inMilliseconds}ms source=${source.sourceId}',
+      );
+    }
     final failed = await context.push<bool>(
       '/mpv-player',
       extra: MpvPlayerArgs(
         url: stream.url,
         title: _movieTitle(),
         sourceLabel: source.label,
-        startAt: stream.position,
+        startAt: startAt,
         // WebView-handoff streams may carry the browser session (Cookie)
         // headers captured from the WebView — merged over the standard
         // Referer/Origin/UA so cookie-gated CDNs accept the handed-off URL.
