@@ -13,6 +13,22 @@ video player** — no visible WebView, no overlay ads, no pop-ups.
 
 ---
 
+## 📑 Daftar Isi
+
+- [✨ Features](#-features)
+- [🏗️ Architecture](#️-architecture)
+- [🚀 Getting Started](#-getting-started)
+- [📱 iOS (tanpa Mac & tanpa biaya)](#-ios-tanpa-mac--tanpa-biaya)
+- [▶️ Playback Flow (native-first, WebView last-resort)](#️-playback-flow-native-first-webview-last-resort)
+- [🔌 Stream Source Pipeline](#-stream-source-pipeline)
+- [🚀 Push to GitHub & build the iOS IPA (free, no Mac)](#-push-to-github--build-the-ios-ipa-free-no-mac)
+- [🧪 Checks](#-checks)
+- [🛠️ Android Build Notes (Troubleshooting)](#️-android-build-notes-troubleshooting)
+- [📝 Changelog (riwayat versi)](#-changelog)
+- [📄 License](#-license)
+
+---
+
 ## ✨ Features
 
 - 🏠 **Home** — hero carousel (trending), popular, top rated & upcoming rows
@@ -388,6 +404,65 @@ flutter doctor   # Android toolchain should be green
 ---
 
 ## 📝 Changelog
+
+<!-- VERSION-TOC:start -->
+
+<details>
+<summary>📜 Riwayat versi (49)</summary>
+
+- [`v1.3.34`](#2026-08-07--v1334-home-decluttered--history-to-settings-genres-to-search)
+- [`v1.3.33`](#2026-08-07--v1333-resume--failover-root-cause-fixes)
+- [`v1.3.32`](#2026-08-07--v1332-webview-dihapus-total--5-fitur-baru--resume-benar-benar-jalan)
+- [`v1.3.31`](#2026-08-07--v1331-continue-watching-resumes-on-every-playback-path)
+- [`v1.3.30`](#2026-08-07--v1330-fix-gesture-scroll--mode-potret-menyatu-dengan-deskripsi-film)
+- [`v1.3.29`](#2026-08-07--v1329-continue-watching-wakelock-gesture-volumebrightness-mode-potret-fix-versioncode)
+- [`v1.3.28`](#2026-08-07--v1328-double-tap-sisi-layar-untuk-10-detik)
+- [`v1.3.27`](#2026-08-07--v1327-mundurmaju-5-detik-di-player)
+- [`v1.3.26`](#2026-08-07--v1326-controls-really-at-the-bottom-root-cause-expandedslider-stretched-the-bar-full-height)
+- [`v1.3.25`](#2026-08-06--v1325-controls-back-at-the-bottom--subtitles-actually-render-on-device-fixes)
+- [`v1.3.24`](#2026-08-06--v1324-2embed-vnest-chain-now-plays-natively-vidnest-cracked)
+- [`v1.3.23`](#2026-08-06--v1323-keyless-subtitles--honest-feedback--nothing-mid-screen)
+- [`v1.3.22`](#2026-08-06--v1322-2embed-chain-rotation--vnestcineby-resolution--anti-frame-fix)
+- [`v1.3.21`](#2026-08-05--v1321-overlays-out-of-the-middle--slower-subtitle-fetch)
+- [`v1.3.20`](#2026-08-05--v1320-second-subtitle-source-subtitlecat--film-jadul-akhirnya-dapat-subtitle-indonesia)
+- [`v1.3.19`](#2026-08-05--v1319-subtitle-indonesia-eksternal-yify-tanpa-api-key--film-jadul-akhirnya-ada-teksnya)
+- [`v1.3.18`](#2026-08-05--v1318-replay-bug-fixed-stale-relay-url--subtitles-auto-select)
+- [`v1.3.17`](#2026-08-05--v1317-mini-player-root-cause-fix-illegal-positioned--x-always-pressable--relay-subtitle-fix)
+- [`v1.3.16`](#2026-08-05--v1316-subtitles-back-libass--mini-playerexpandx-fixes)
+- [`v1.3.15`](#2026-08-05--v1315-mini-player-position--honest-subtitlesettings-feedback)
+- [`v1.3.14`](#2026-08-05--v1314-player-preferences-remembered-across-sessions)
+- [`v1.3.13`](#2026-08-05--v1313-ios-player-features--android-custom-controls--pop-up-film-mini-player)
+- [`v1.3.12`](#2026-08-05--v1312-fix-silent-hlsrelay-null-server-crash--relayfailed-on-device)
+- [`v1.3.11`](#2026-08-05--v1311-2embed-direct-hls-extraction--local-png-strip-relay--the-ios-native-fix)
+- [`v1.3.10`](#2026-08-05--v1310-neutralise-the-2vcdn-anti-framing-guard--jw-player-finally-requests-its-m3u8-on-ios)
+- [`v1.3.9`](#2026-08-05--v139-2embedskin-direct-player-bypass--ios-finally-plays-natively)
+- [`v1.3.8`](#2026-08-03--v138-neutralise-disable-devtool--2embedskin-finally-captures-on-ios)
+- [`v1.3.7`](#2026-08-03--v137-ios-native-playback-root-cause-fix--vidlink-urls-are-webview-only-never-feed-them-to-mpv)
+- [`v1.3.6`](#2026-08-03--v136-ios-release-builds-now-log-to-the-system-log-nslog-bridge--logcat-finally-works-on-iphone)
+- [`v1.3.5`](#2026-08-03--v135-fix-native-playback-failed-over-a-still-loading-mpv--root-cause-the-vidlink-428)
+- [`v1.3.4`](#2026-08-03--v134-detail-cast-chips-separated-from-the-glass-info-panel-no-more-cloudy-glass-in-glass)
+- [`v1.3.3`](#2026-08-03--v133-grid-scroll-stress-tests-prove-glass-grids-stay-lazy--clean)
+- [`v1.3.2`](#2026-08-03--v132-grid-scroll-perf-hardening-for-glass-cards-ios)
+- [`v1.3.1`](#2026-08-03--v131-liquid-glass-on-movie-cards--detail-cast-ios)
+- [`v1.3.0`](#2026-08-03--v130-doubled-home-tab-fixed-more-liquid-glass-mpv-startup-auto-failover-no-dead-end-error-over-loading-player)
+- [`v1.2.1`](#2026-08-02--v121-ios-native-playback-fixed-cdn-headers-real-liquid-glass-on-every-screen-watchlist-tab-unified-neutral-no-blue-ios-theme)
+- [`2026-08-02`](#2026-08-02--engineering-hardening-resign-retry-rate-limit-bump_versionsh-ci-gate-no-default-tmdb-key-data-driven-source-health)
+- [`v1.1.0`](#2026-08-02--ios-v110-mpv-direct-play-no-webview-detour-real-liquid-glass-v2-swipe-dismiss-fullscreen-resign-fix)
+- [`2026-08-02`](#2026-08-02--ios-liquid-glass-ui-verified-golden-tests--live-preview-flag--capsule-overflow-fix)
+- [`2026-08-02`](#2026-08-02--ios-native-first-extraction-fix-interception-flags--liquid-glass-ui)
+- [`2026-08-02`](#2026-08-02--ios-sideload-tooling-sideloader-binary--resign_iossh)
+- [`2026-08-02`](#2026-08-02--auto-handoff-webviewmpv-cap-2-capture-blank-white-fix-early-abort-cdn-ios-deps)
+- [`2026-08-01`](#2026-08-01--media_kit-libmpv-native-player--direct-auto-capture-flow)
+- [`2026-08-01`](#2026-08-01--webview-anti-iklan--native-handoff-play-natively)
+- [`2026-08-01`](#2026-08-01--new-source-2embedskin-revived-2embed-ecosystem)
+- [`2026-08-01`](#2026-08-01--browser-headers-experiment-native-playback-for-vidlink)
+- [`2026-08-01`](#2026-08-01--build-0201-release-apk)
+- [`2026-08-01`](#2026-08-01--html-entity-decode-for-extracted-urls-http-502-class-fix)
+- [`2026-08-01`](#2026-08-01--webview-fallback-player-play-when-exoplayer-cannot)
+
+</details>
+
+<!-- VERSION-TOC:end -->
 
 ### `2026-08-07` — v1.3.34: Home decluttered — history to Settings, genres to Search
 
