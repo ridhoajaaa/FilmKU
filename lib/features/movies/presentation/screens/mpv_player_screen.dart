@@ -216,6 +216,15 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
   static const Duration _errorGracePeriod = Duration(seconds: 4);
   Timer? _errorGraceTimer;
 
+  /// Pre-start error grace: mpv emits TRANSIENT errors while a stream is
+  /// still loading (a dropped segment, a slow first playlist, a sub-request
+  /// 403) moments before the first frame arrives. An error with no playback
+  /// evidence yet must NOT failover instantly — that popped the screen right
+  /// as the movie was starting ("Stream tidak dapat dimulai" over a movie
+  /// that then played fine, 2026-08). Wait this window for real progress;
+  /// the first position event cancels it.
+  Timer? _preStartErrorGraceTimer;
+
   /// Silent-freeze watchdog period: while playback is supposedly running, if
   /// the RAW position doesn't advance within this window the stream has
   /// silently died (no error event — e.g. the CDN kills the connection).
@@ -429,6 +438,7 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
     _silentFreezeConsecutive = 0;
     _subtitleAutoSelected = false;
     _errorGraceTimer?.cancel();
+    _preStartErrorGraceTimer?.cancel();
     try {
       // Resume-safe open: open PAUSED, seek to the resume position, THEN
       // play. Opening with `play: true` and seeking right after races mpv's
@@ -443,16 +453,42 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
         play: false,
       );
       if (widget.args.startAt > Duration.zero) {
+        // For a NETWORK HLS stream, open(play:false) completes BEFORE the
+        // demuxer knows the duration — a seek issued immediately can be
+        // dropped by mpv (the stream is still loading its playlist), which
+        // read as "Lanjutkan menonton starts from the beginning". Wait
+        // (bounded) until the duration is known before seeking; if it never
+        // resolves (live / unknown-duration streams), seek anyway after the
+        // wait budget.
+        final seekDeadline = DateTime.now().add(const Duration(seconds: 8));
+        while (_player.state.duration <= Duration.zero &&
+            DateTime.now().isBefore(seekDeadline)) {
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+        }
         await _player.seek(widget.args.startAt);
         appLog(
           'FILMKU_MPV_SEEKED',
           'to=${widget.args.startAt.inMilliseconds}ms '
-              'movieId=${widget.args.tmdbId}',
+              'movieId=${widget.args.tmdbId} '
+              'durationKnownMs=${_player.state.duration.inMilliseconds}',
         );
       }
       await _player.play();
       appLog('FILMKU_MPV_OPENED', '');
       _startWatchdogs();
+      // Resume-verify diagnostics (2026-08): 2s after play, log where the
+      // position actually is vs. where it should be — proves the seek took
+      // (or shows it was dropped) in logcat without needing a UI probe.
+      if (widget.args.startAt > Duration.zero) {
+        Future<void>.delayed(const Duration(seconds: 2), () {
+          if (!mounted) return;
+          appLog(
+            'FILMKU_MPV_RESUME_VERIFY',
+            'startAt=${widget.args.startAt.inMilliseconds}ms '
+                'actual=${_player.state.position.inMilliseconds}ms',
+          );
+        });
+      }
     } catch (e) {
       appLog('FILMKU_MPV_OPEN_ERROR', '$e');
       // Open threw (bad/unsupported URL) — the stream can never start, so
@@ -539,8 +575,13 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
 
   /// Handles a media-kit error.
   ///
-  /// - No evidence of playback yet → surface the failure immediately (the
-  ///   stream never started).
+  /// - No evidence of playback yet → wait a short pre-start grace window
+  ///   ([_errorGracePeriod]): mpv emits transient errors while a stream is
+  ///   still loading (a dropped segment, a slow first playlist, a sub-request
+  ///   403) moments before the first frame arrives — failing over INSTANTLY
+  ///   popped the screen right as the movie was starting (the "Stream tidak
+  ///   dapat dimulai" over a movie that then played fine, 2026-08). Only if
+  ///   the stream STILL has no first frame after the window do we fail over.
   /// - Error WHILE playback is progressing → give it a short grace window
   ///   ([_errorGracePeriod]): if the position keeps advancing the error was
   ///   transient (a dropped segment) and is ignored (the 2026-08 iOS bug:
@@ -552,13 +593,19 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
       sawPlaying: _sawPlaying,
       lastPosition: _lastPosition,
     )) {
-      // Stream NEVER started (no playing event, no position) — e.g. the
-      // signed CDN URL is rejected/refused before the 12s watchdog fires.
-      // Auto-failover to the backup player instead of parking the full
-      // "Native playback failed" UI over a still-loading player (the exact
-      // symptom reported on iOS 2026-08). Consistent with the watchdog and
-      // open-error paths.
-      _startupFailed('Playback error: $error');
+      // Stream has NO playback evidence yet (no playing event, no position)
+      // — but do NOT failover instantly: see the pre-start grace doc above.
+      appLog('FILMKU_MPV_ERROR_PRE_START', '(no first frame yet, grace)');
+      if (_preStartErrorGraceTimer?.isActive ?? false) return;
+      _preStartErrorGraceTimer = Timer(_errorGracePeriod, () {
+        if (mounted && !_failed && !_sawPlaying) {
+          // Still no first frame after the grace window — the signed CDN
+          // URL is rejected/refused (vidlink → 403/428). Auto-failover to
+          // the backup player instead of parking the full "Native playback
+          // failed" UI over a still-loading player.
+          _startupFailed('Playback error: $error');
+        }
+      });
       return;
     }
     appLog('FILMKU_MPV_ERROR_GRACE_START', '(waiting for progress)');
@@ -655,6 +702,20 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
         // is simply buffering its first frames.
         _sawPlaying = true;
         _startupWatchdog?.cancel();
+        _preStartErrorGraceTimer?.cancel();
+        // If a pre-start failover notice is already up, the movie is now
+        // demonstrably playing — cancel the failover instead of popping the
+        // screen over a playing movie (the 2026-08 report: "Stream tidak
+        // dapat dimulai" notice over a movie that had just started).
+        if (_autoFailover && _failoverTimer != null) {
+          appLog('FILMKU_MPV_FAILOVER_CANCELLED', '(first frame arrived)');
+          _failoverTimer!.cancel();
+          setState(() {
+            _failed = false;
+            _autoFailover = false;
+            _failoverDetail = '';
+          });
+        }
         appLog('FILMKU_MPV_PLAYING', '(position advanced past zero)');
         // Full watch history: record this play ONCE per session, on the
         // first real frame (a stream that never started must not pollute the
@@ -691,6 +752,7 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
     _startupWatchdog?.cancel();
     _silentFreezeWatchdog?.cancel();
     _errorGraceTimer?.cancel();
+    _preStartErrorGraceTimer?.cancel();
     _failoverTimer?.cancel();
     _errorSub?.cancel();
     _playingSub?.cancel();

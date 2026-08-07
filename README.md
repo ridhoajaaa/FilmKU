@@ -419,6 +419,28 @@ flutter doctor   # Android toolchain should be green
 
 ## 📝 Changelog
 
+### `2026-08-07` — v1.3.33: resume & failover root-cause fixes
+
+- **"Lanjutkan menonton" resume di-fix dua lapis.** (1) `resolveStartPosition`
+  kini tahu kapan play berasal dari kartu Lanjutkan menonton (`resumeRequested`):
+  posisi tersimpan (mis. 34 menit) TIDAK lagi dikalahkan oleh posisi kecil
+  non-nol yang dilaporkan auto-capture (WebView tersembunyi sudah memutar
+  0–30 dtk film sambil menangkap URL stream — probe `t:26.4`), yang dulu
+  me-reset titik lanjut ke detik-detik awal. (2) seek mpv di-hardening:
+  `open(play:false)` untuk HLS network selesai SEBELUM demuxer tahu durasi,
+  jadi seek resume bisa ter-drop dan film main dari 0 — kini player menunggu
+  durasi dikenal (maks 8 dtk) sebelum seek. Diagnostik baru
+  `FILMKU_MPV_RESUME_VERIFY` (posisi aktual vs startAt, 2 dtk setelah play)
+  membuktikan seek benar-benar jalan di logcat.
+- **"Stream tidak dapat dimulai — beralih ke pemutar cadangan" di-fix.** mpv
+  mengeluarkan error TRANSIEN saat stream masih loading (segment ter-drop,
+  playlist pertama lambat, sub-request 403) beberapa saat SEBELUM frame
+  pertama tiba. Error pre-start dulu langsung memicu failover — notice muncul
+  tepat saat film mau jalan. Kini error tanpa bukti playback mendapat grace
+  window 4 dtk; jika frame pertama tiba (posisi > 0) grace dibatalkan dan
+  failover pun dibatalkan (`FILMKU_MPV_FAILOVER_CANCELLED`). Film yang
+  benar-benar jalan tidak lagi di-pop.
+
 ### `2026-08-07` — v1.3.32: WebView dihapus total + 5 fitur baru + resume benar-benar jalan
 
 - **WebView fallback dihapus (permintaan user):** WebView visible kadang

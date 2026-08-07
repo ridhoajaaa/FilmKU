@@ -55,4 +55,51 @@ void main() {
       expect(start, const Duration(hours: 1, minutes: 40));
     });
   });
+
+  group('PlayerScreen.resolveStartPosition (resume requested)', () {
+    const saved = Duration(minutes: 34, seconds: 12);
+
+    test('saved position is authoritative over a small auto-capture position',
+        () {
+      // The hidden auto-capture WebView reports a small NON-zero capture
+      // position (it already played 0-30s of the movie while hunting for the
+      // stream URL). For a resume play it must NOT reset the resume point to
+      // the first seconds (the 2026-08 "Lanjutkan menonton still starts from
+      // the beginning" bug) — the saved position wins.
+      final start = PlayerScreen.resolveStartPosition(
+        streamPosition: const Duration(seconds: 26),
+        savedPosition: saved,
+        resumeRequested: true,
+      );
+      expect(start, saved);
+    });
+
+    test('resume with a zero saved position falls back to the stream position',
+        () {
+      final start = PlayerScreen.resolveStartPosition(
+        streamPosition: const Duration(seconds: 5),
+        savedPosition: Duration.zero,
+        resumeRequested: true,
+      );
+      expect(start, const Duration(seconds: 5));
+    });
+
+    test('resume with no saved progress starts from the stream position', () {
+      final start = PlayerScreen.resolveStartPosition(
+        streamPosition: const Duration(seconds: 10),
+        savedPosition: null,
+        resumeRequested: true,
+      );
+      expect(start, const Duration(seconds: 10));
+    });
+
+    test('resume with nothing saved anywhere starts from zero', () {
+      final start = PlayerScreen.resolveStartPosition(
+        streamPosition: Duration.zero,
+        savedPosition: null,
+        resumeRequested: true,
+      );
+      expect(start, Duration.zero);
+    });
+  });
 }

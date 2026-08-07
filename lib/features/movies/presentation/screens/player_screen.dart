@@ -144,21 +144,33 @@ class PlayerScreen extends ConsumerStatefulWidget {
 
   /// Resolves where a stream handed to the mpv player should start.
   ///
-  /// The incoming [streamPosition] wins when it is non-zero (a stream that
-  /// already carried a real position keeps it). Otherwise the saved
-  /// continue-watching [savedPosition] is used — so replaying a movie from
-  /// the Home "Lanjutkan menonton" row resumes even when the stream came
-  /// from hidden auto-capture (which starts at zero; the OLD code only
-  /// resumed on the direct-extraction path, so auto-capture movies always
-  /// restarted from 0 — 2026-08 report). Exposed for tests.
+  /// When [resumeRequested] (the play came from the Home "Lanjutkan
+  /// menonton" row) the saved continue-watching [savedPosition] is
+  /// AUTHORITATIVE: the hidden auto-capture WebView reports a small NON-zero
+  /// capture position (it already played 0–30s of the movie while hunting
+  /// for the stream URL — 2026-08 probe `t:26.4`), and letting that tiny
+  /// position win over e.g. a 34-minute saved position reset the resume
+  /// point to the first seconds (the "Lanjutkan menonton still starts from
+  /// the beginning" bug). The capture position is only a resume hint when
+  /// there is NO saved progress.
+  ///
+  /// Without [resumeRequested] (a fresh play from Detail) the stream's own
+  /// position wins when non-zero (a genuine WebView hand-off stream keeps
+  /// its position), and a saved position is only a fallback for zero-position
+  /// streams. Exposed for tests.
   @visibleForTesting
   static Duration resolveStartPosition({
     required Duration streamPosition,
     required Duration? savedPosition,
-  }) =>
-      streamPosition > Duration.zero
-          ? streamPosition
-          : (savedPosition ?? Duration.zero);
+    bool resumeRequested = false,
+  }) {
+    if (resumeRequested && (savedPosition ?? Duration.zero) > Duration.zero) {
+      return savedPosition!;
+    }
+    return streamPosition > Duration.zero
+        ? streamPosition
+        : (savedPosition ?? Duration.zero);
+  }
 
   /// Builds the HTTP headers mpv should send to the stream CDN.
   ///
@@ -356,6 +368,12 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
     final startAt = PlayerScreen.resolveStartPosition(
       streamPosition: stream.position,
       savedPosition: saved,
+      // The hidden auto-capture WebView reports a small NON-zero capture
+      // position (it played 0–30s while capturing the stream URL). For a
+      // resume play that tiny position must NOT override the saved
+      // continue-watching position (2026-08: resuming jumped back to the
+      // first seconds) — the saved position is authoritative here.
+      resumeRequested: widget.resume,
     );
     debugPrint(
       'FILMKU_PLAYER_RESUME_LOOKUP movieId=${widget.movieId} '
