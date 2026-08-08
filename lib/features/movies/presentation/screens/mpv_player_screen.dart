@@ -464,23 +464,44 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
       HlsRelay.instance.serveSubtitle(tmdbId, sub.data);
       final isRelayStream = widget.args.url.startsWith('http://127.0.0.1:');
       if (isRelayStream) {
-        // The injected HLS subtitle track was enumerated at open (title
-        // 'FilmKU Indonesia', pointing at the subtitle PLAYLIST). Wait
-        // briefly for it if the tracks event hasn't arrived yet, then select
-        // it via the native sid path — mpv fetches the playlist + WebVTT
-        // segment and libass renders it. (sub-add is NOT used: the Android
-        // libmpv build rejects every external sub-add form.)
+        // The injected HLS subtitle track was enumerated at open (the tracks
+        // event goes from subtitle=2 auto+no to subtitle=3). Find it via its
+        // ID, NOT its title: media_kit ALWAYS prepends SubtitleTrack.auto()
+        // and SubtitleTrack.no() (ids 'auto'/'no'), and mpv's Android build
+        // does NOT surface the EXT-X-MEDIA NAME as the track title (the
+        // injected track shows as '?' like the phantoms — on-device logcat
+        // 2026-08: subTitles=?|?|?). So the first non-auto/no track is the
+        // injected one. Wait briefly for the tracks event if it hasn't
+        // arrived yet, then select it via the native sid path — mpv fetches
+        // the playlist + WebVTT segment and libass renders it. (sub-add is
+        // NOT used: the Android libmpv build rejects every external form.)
         SubtitleTrack? injected;
         final deadline = DateTime.now().add(const Duration(seconds: 3));
         while (injected == null && DateTime.now().isBefore(deadline)) {
-          final matches = _player.state.tracks.subtitle
+          final tracks = _player.state.tracks.subtitle;
+          // Prefer an explicit 'FilmKU' title match (desktop/iOS surface
+          // the NAME; Android shows '?').
+          final byTitle = tracks
               .where((t) => (t.title?.trim() ?? '').startsWith('FilmKU'))
               .toList();
-          if (matches.isNotEmpty) {
-            injected = matches.first;
-          } else {
-            await Future<void>.delayed(const Duration(milliseconds: 200));
+          if (byTitle.isNotEmpty) {
+            injected = byTitle.first;
+            continue;
           }
+          // Fallback: first track that is neither auto nor no — for streams
+          // with NO native subtitles (2vcdn: subtitle=2 = auto+no only) the
+          // only such track IS the injected one.
+          final real =
+              tracks.where((t) => t.id != 'auto' && t.id != 'no').toList();
+          if (real.isNotEmpty) {
+            injected = real.first;
+            appLog(
+                'FILMKU_SUBS',
+                'injected track found by id=${real.first.id} '
+                    'title=${real.first.title ?? '?'}');
+            continue;
+          }
+          await Future<void>.delayed(const Duration(milliseconds: 200));
         }
         if (injected == null) {
           // The injected track didn't enumerate (platform/demuxer quirk) —

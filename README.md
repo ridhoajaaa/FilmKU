@@ -427,6 +427,25 @@ flutter doctor   # Android toolchain should be green
   Subtitle slot is cleared on player dispose. 7 relay tests (incl. the
   URI-must-be-playlist assertion), 266/266 pass.
 
+### `2026-08-08` — v1.3.48: find the injected track by ID, not title — Android subtitles finally render
+
+- **v1.3.47's one remaining bug (on-device logcat):** the injected HLS track
+  WAS enumerated (`subtitle=2` → `subtitle=3`) but the player searched for it
+  by TITLE (`title.startsWith('FilmKU')`) — and mpv's Android build does NOT
+  surface the `EXT-X-MEDIA` NAME as the track title (the injected track shows
+  `subTitles=?` just like the phantom tracks). The lookup missed it, fell
+  back to `sub-add`, which the reduced Android libmpv rejects → subtitles
+  stayed empty even though the video played.
+- **Fix:** find the track by ID, not title. media_kit ALWAYS prepends
+  `SubtitleTrack.auto()` and `SubtitleTrack.no()` (ids `auto`/`no`), so for a
+  stream with no native subtitles (2vcdn: subtitle=2 = auto+no only) the
+  first non-auto/no track IS the injected one. A title match still wins when
+  the platform DOES surface the NAME (desktop/iOS); otherwise the id-based
+  fallback picks the injected track. Selection still goes through the native
+  `sid` path (no sub-add).
+- New log `FILMKU_SUBS injected track found by id=...` proves the hit
+  on-device. 266/266 tests pass, analyze clean.
+
 ### `2026-08-08` — v1.3.46: REVERT v1.3.45 — HLS track injection broke video playback
 
 - **Regression fixed.** v1.3.45 injected an `#EXT-X-MEDIA:TYPE=SUBTITLES`
@@ -679,9 +698,10 @@ Semua tab sekarang konsisten mengambang bebas.
 <!-- VERSION-TOC:start -->
 
 <details>
-<summary>📜 Riwayat versi (62)</summary>
+<summary>📜 Riwayat versi (63)</summary>
 
 - [`v1.3.47`](#2026-08-08--v1347-hls-subtitle-injection-redone--uri-points-at-a-playlist-video-keeps-playing)
+- [`v1.3.48`](#2026-08-08--v1348-find-the-injected-track-by-id-not-title--android-subtitles-finally-render)
 - [`v1.3.46`](#2026-08-08--v1346-revert-v1345--hls-track-injection-broke-video-playback)
 - [`v1.3.45`](#2026-08-08--v1345-subtitles-injected-as-hls-tracks--the-android-proof-attach)
 - [`v1.3.44`](#2026-08-08--v1344-subtitles-served-over-the-local-relay--mpv-finally-renders-them)
