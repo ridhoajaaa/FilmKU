@@ -143,10 +143,17 @@ void main() {
     expect(vtt, contains('Hello world'));
     expect(vtt, contains('Second cue'));
   });
-
-  test(
-      'master playlist gets an injected HLS subtitle track when tmdbId is present in the request query',
+  test('master playlist is NEVER modified (HLS injection regression guard)',
       () async {
+    // v1.3.45 injected an EXT-X-MEDIA SUBTITLES track into the master — the
+    // ffmpeg hls demuxer used by mpv's Android build rejected the whole
+    // playlist (video never started: durationKnownMs=0, STARTUP_TIMEOUT,
+    // verified with ffmpeg: `parse_playlist error Invalid argument`). The
+    // relay must serve the master VERBATIM (v1.3.44 behavior). This guard
+    // runs with AND without a tmdbId in the query AND with a registered
+    // subtitle slot — none of them may alter the master.
+    HlsRelay.instance
+        .serveSubtitle(1339713, '1\n00:00:01,000 --> 00:00:02,000\nX\n');
     final cdn = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final base = 'http://127.0.0.1:${cdn.port}';
     cdn.listen((request) async {
@@ -160,62 +167,26 @@ void main() {
     try {
       final relayUrl = await HlsRelay.instance.serve('$base/master.m3u8');
       expect(relayUrl, isNotNull);
-      // The player appends tmdbId to the relay URL (the injection trigger).
-      final uri = Uri.parse(relayUrl!).replace(queryParameters: {
-        ...Uri.parse(relayUrl).queryParameters,
-        'tmdbId': '1339713'
-      });
       final client = HttpClient();
       try {
-        final masterText = await client
-            .getUrl(uri)
-            .then((r) => r.close())
-            .then(utf8.decodeStream);
-        expect(masterText, contains('#EXT-X-MEDIA:TYPE=SUBTITLES'));
-        expect(masterText, contains('GROUP-ID="filmku"'));
-        expect(masterText, contains('filmku-sub.vtt?tmdbId=1339713'));
-        expect(masterText, contains('SUBTITLES="filmku"'));
-        // The injected track must be DEFAULT=NO so mpv lists it without
-        // fetching the (not-yet-registered) WebVTT at open.
-        expect(masterText, contains('DEFAULT=NO'));
-        // HLS spec: #EXTM3U MUST remain the very first line — a tag before
-        // it makes ffmpeg's hls demuxer reject the whole playlist (video
-        // included). The media line is inserted AFTER the header.
-        expect(masterText.startsWith('#EXTM3U\n'), isTrue,
-            reason: '#EXTM3U must stay the first line');
-        final header = masterText.split('\n');
-        expect(header[1], contains('#EXT-X-MEDIA:TYPE=SUBTITLES'));
-      } finally {
-        client.close(force: true);
-      }
-    } finally {
-      await HlsRelay.instance.dispose();
-      await cdn.close(force: true);
-    }
-  });
-
-  test('master playlist has NO injected subtitle track without tmdbId',
-      () async {
-    final cdn = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-    final base = 'http://127.0.0.1:${cdn.port}';
-    cdn.listen((request) async {
-      request.response.headers.contentType =
-          ContentType('application', 'vnd.apple.mpegurl');
-      request.response.write('#EXTM3U\n'
-          '#EXT-X-STREAM-INF:BANDWIDTH=1000\n'
-          'variant.m3u8\n');
-      await request.response.close();
-    });
-    try {
-      final relayUrl = await HlsRelay.instance.serve('$base/master.m3u8');
-      expect(relayUrl, isNotNull);
-      final client = HttpClient();
-      try {
-        final masterText = await client
-            .getUrl(Uri.parse(relayUrl!))
-            .then((r) => r.close())
-            .then(utf8.decodeStream);
-        expect(masterText, isNot(contains('#EXT-X-MEDIA:TYPE=SUBTITLES')));
+        for (final withTmdb in [false, true]) {
+          var uri = Uri.parse(relayUrl!);
+          if (withTmdb) {
+            uri = uri.replace(queryParameters: {
+              ...uri.queryParameters,
+              'tmdbId': '1339713',
+            });
+          }
+          final masterText = await client
+              .getUrl(uri)
+              .then((r) => r.close())
+              .then(utf8.decodeStream);
+          expect(masterText, isNot(contains('#EXT-X-MEDIA:TYPE=SUBTITLES')),
+              reason: 'master must stay verbatim (withTmdb=$withTmdb)');
+          expect(masterText, isNot(contains('filmku-sub.vtt')),
+              reason: 'master must stay verbatim (withTmdb=$withTmdb)');
+          expect(masterText.startsWith('#EXTM3U\n'), isTrue);
+        }
       } finally {
         client.close(force: true);
       }

@@ -462,38 +462,6 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
         return;
       }
       HlsRelay.instance.serveSubtitle(tmdbId, sub.data);
-      final isRelayStream = widget.args.url.startsWith('http://127.0.0.1:');
-      if (isRelayStream) {
-        // The injected HLS track was enumerated at open (title
-        // 'FilmKU Indonesia'). Wait briefly for it if the tracks event
-        // hasn't arrived yet, then select it via the native sid path.
-        SubtitleTrack? injected;
-        final deadline = DateTime.now().add(const Duration(seconds: 3));
-        while (injected == null && DateTime.now().isBefore(deadline)) {
-          final matches = _player.state.tracks.subtitle
-              .where((t) => (t.title?.trim() ?? '').startsWith('FilmKU'))
-              .toList();
-          if (matches.isNotEmpty) {
-            injected = matches.first;
-          } else {
-            await Future<void>.delayed(const Duration(milliseconds: 200));
-          }
-        }
-        if (injected == null) {
-          appLog('FILMKU_SUBS',
-              'injected HLS track not enumerated tmdbId=$tmdbId');
-          _notifySubsResult(false);
-          return;
-        }
-        await _player.setSubtitleTrack(injected);
-        appLog(
-          'FILMKU_SUBS_ATTACHED',
-          '${sub.language} ${sub.data.length} chars via HLS sid='
-              '${injected.id} tmdbId=$tmdbId',
-        );
-        return;
-      }
-      // Non-relay stream (direct m3u8/mp4): best-effort HTTP sub-add.
       final subUrl = 'http://127.0.0.1:$port/filmku-sub.srt?tmdbId=$tmdbId';
       await _player.setSubtitleTrack(
         SubtitleTrack.uri(subUrl, title: sub.title, language: sub.language),
@@ -506,18 +474,6 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
       appLog('FILMKU_SUBS', 'attach failed tmdbId=$tmdbId $error');
       _notifySubsResult(false);
     }
-  }
-
-  /// Appends `&tmdbId=` to a RELAY stream URL so the relay injects the HLS
-  /// subtitle track into the master playlist. Non-relay URLs pass through
-  /// unchanged (no playlist rewriting happens there).
-  String _urlWithSubtitleTmdb() {
-    final url = widget.args.url;
-    final tmdbId = widget.args.tmdbId;
-    if (tmdbId == null || !url.startsWith('http://127.0.0.1:')) return url;
-    if (url.contains('tmdbId=')) return url;
-    final sep = url.contains('?') ? '&' : '?';
-    return '$url${sep}tmdbId=$tmdbId';
   }
 
   /// Surfaces the external-subtitle outcome ONCE per session as an overlay
@@ -554,16 +510,9 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
       // async load for a network stream — the autoplay may buffer from 0 and
       // the seek gets dropped, which read as "Lanjutkan menonton starts from
       // the beginning" (2026-08). Paused-open → seek → play is deterministic.
-      //
-      // Relay streams also get the tmdbId appended to the master URL so the
-      // relay injects an HLS EXT-X-MEDIA subtitle track into the playlist
-      // (the ONLY subtitle form the Android libmpv build loads — sub-add
-      // rejects every external form, 2026-08). The track is DEFAULT=NO so
-      // mpv lists it without fetching; the player selects it explicitly once
-      // the external SRT is registered (~2s later).
       await _player.open(
         Media(
-          _urlWithSubtitleTmdb(),
+          widget.args.url,
           httpHeaders: widget.args.httpHeaders,
         ),
         play: false,

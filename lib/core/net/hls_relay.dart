@@ -236,54 +236,21 @@ class HlsRelay {
       return;
     }
     var text = rewritten.playlist;
-    // MASTER playlists (they carry #EXT-X-STREAM-INF) get an injected HLS
-    // SUBTITLES track: mpv Android's reduced libmpv rejects sub-add for EVERY
-    // external form (file, path, file://, http:// — "Can not open external
-    // file", 2026-08 logcats) yet enumerates HLS EXT-X-MEDIA tracks natively
-    // and selects them via the `sid` property. The player appends tmdbId to
-    // the master URL (see _urlWithSubtitleTmdb), so the track is present from
-    // the VERY FIRST fetch (before the subtitle content registers ~2s later);
-    // the player selects the injected track once the SRT is registered — mpv
-    // fetches /filmku-sub.vtt?tmdbId=, which serves the SRT as WebVTT.
-    // libass=true is already configured in MiniPlayerService, so the cue
-    // renders. (fallback: _subtitleTmdbId keeps non-appended streams working.)
-    final fromQuery = int.tryParse(request.uri.queryParameters['tmdbId'] ?? '');
-    final tmdbId = fromQuery ?? _subtitleTmdbId;
-    if (tmdbId != null && body.contains('#EXT-X-STREAM-INF')) {
-      text = _injectSubtitleTrack(text, tmdbId);
-    }
+    // NOTE (2026-08 REGRESSION REVERT): v1.3.45 injected an HLS EXT-X-MEDIA
+    // SUBTITLES track into the master playlist — the ffmpeg hls demuxer used
+    // by mpv's Android build REJECTS masters carrying an EXT-X-MEDIA URI it
+    // must fetch (on-device: subtitle=2 stayed auto+no, durationKnownMs=0,
+    // STARTUP_TIMEOUT — the injected track killed the WHOLE video, verified
+    // with ffmpeg on the laptop: `parse_playlist error Invalid argument`).
+    // Reverted to serving the playlist verbatim (the proven-working v1.3.44
+    // shape: video plays, external subtitles attach via sub-add where the
+    // platform supports it). The /filmku-sub.vtt route + srtToVtt stay for
+    // future subtitle work that does NOT touch the master playlist.
     request.response.headers.contentType =
         ContentType('application', 'vnd.apple.mpegurl');
     request.response.headers.set('Access-Control-Allow-Origin', '*');
     request.response.add(utf8.encode(text));
     await request.response.close();
-  }
-
-  /// Injects an `#EXT-X-MEDIA:TYPE=SUBTITLES` track into a rewritten MASTER
-  /// playlist and links its group from every variant stream. The track is
-  /// DEFAULT=NO/AUTOSELECT=NO so mpv lists it WITHOUT fetching it at open
-  /// (the subtitle is registered ~2s later — a pre-fetched empty VTT would
-  /// be cached and never refreshed). The player selects it explicitly once
-  /// the SRT is registered.
-  ///
-  /// HLS spec: `#EXTM3U` MUST stay the FIRST line — the media line is
-  /// inserted immediately AFTER it, never before (a tag preceding #EXTM3U
-  /// makes ffmpeg's hls demuxer — used by mpv — reject the whole playlist,
-  /// killing the video too; reviewer finding 2026-08).
-  String _injectSubtitleTrack(String playlist, int tmdbId) {
-    final port = _server!.port;
-    const name = 'FilmKU Indonesia';
-    final media = '#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="filmku",'
-        'NAME="$name",DEFAULT=NO,AUTOSELECT=NO,FORCED=NO,LANGUAGE="id",'
-        'URI="http://127.0.0.1:$port/filmku-sub.vtt?tmdbId=$tmdbId"';
-    // Link the subtitle group from every variant stream line.
-    final linked = playlist.replaceAllMapped(
-      RegExp(r'(#EXT-X-STREAM-INF:[^\n]*)'),
-      (m) => '${m.group(1)},SUBTITLES="filmku"',
-    );
-    return linked.startsWith('#EXTM3U\n')
-        ? linked.replaceFirst('#EXTM3U\n', '#EXTM3U\n$media\n')
-        : '$media\n$linked';
   }
 
   /// Serves a registered external subtitle (`/filmku-sub.vtt?tmdbId={id}`)

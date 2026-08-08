@@ -405,6 +405,26 @@ flutter doctor   # Android toolchain should be green
 
 ## 📝 Changelog
 
+### `2026-08-08` — v1.3.46: REVERT v1.3.45 — HLS track injection broke video playback
+
+- **Regression fixed.** v1.3.45 injected an `#EXT-X-MEDIA:TYPE=SUBTITLES`
+  track into the relay's master playlist — the ffmpeg hls demuxer used by
+  mpv's Android build **rejects** masters carrying an EXT-X-MEDIA URI it must
+  fetch (on-device: `subtitle=2` stayed auto+no, `durationKnownMs=0`,
+  `STARTUP_TIMEOUT` — the injected track killed the WHOLE video; reproduced
+  with ffmpeg on the laptop: `parse_playlist error Invalid argument`).
+  Subtitles never appeared AND the movie never started.
+- **Fix:** relay serves the master playlist VERBATIM again (proven v1.3.44
+  shape: video plays). External subtitles attach via `sub-add` where the
+  platform supports it (desktop/full mpv); the Android build's reduced libmpv
+  still rejects every external sub-add form — that's a libmpv build
+  limitation (media_kit is already on the latest 1.2.6 + libs_android 1.3.8;
+  no newer libmpv exists to upgrade to).
+- Kept from v1.3.45: the `/filmku-sub.vtt` route + `srtToVtt` (future
+  subtitle work that does NOT touch the master playlist). New regression
+  guard test: master is never modified, with/without tmdbId in the query,
+  even with a registered subtitle slot. 264/264 pass.
+
 ### `2026-08-08` — v1.3.45: subtitles injected as HLS tracks — the Android-proof attach
 
 - **Why the HTTP relay was not enough (2026-08, on-device Android + adb
@@ -637,8 +657,9 @@ Semua tab sekarang konsisten mengambang bebas.
 <!-- VERSION-TOC:start -->
 
 <details>
-<summary>📜 Riwayat versi (60)</summary>
+<summary>📜 Riwayat versi (61)</summary>
 
+- [`v1.3.46`](#2026-08-08--v1346-revert-v1345--hls-track-injection-broke-video-playback)
 - [`v1.3.45`](#2026-08-08--v1345-subtitles-injected-as-hls-tracks--the-android-proof-attach)
 - [`v1.3.44`](#2026-08-08--v1344-subtitles-served-over-the-local-relay--mpv-finally-renders-them)
 - [`v1.3.43`](#2026-08-08--v1343-subtitles-finally-attach--the-media_kit-temp-file-bug)
