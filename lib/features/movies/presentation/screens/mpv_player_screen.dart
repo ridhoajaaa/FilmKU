@@ -408,6 +408,12 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
       _subtitleNotice.value = 'Subtitle masih dicari…';
       return;
     }
+    // The fetch would return at its guards — tell the user instead of
+    // pretending to search (reviewer finding, 2026-08).
+    if (_failed || widget.args.tmdbId == null) {
+      _subtitleNotice.value = 'Tidak bisa mencari subtitle untuk film ini.';
+      return;
+    }
     _subsResultShown = false;
     unawaited(_loadExternalSubtitles());
   }

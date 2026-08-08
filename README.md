@@ -405,6 +405,16 @@ flutter doctor   # Android toolchain should be green
 
 ## 📝 Changelog
 
+### `2026-08-08` — v1.3.41: remove-button polish (bigger tap target + honest retry)
+
+- The continue-watching **X button now uses a Material/InkWell circle with a
+  larger hit area** (was a bare 24px container — fiddly on touch) and a
+  proper ripple on press.
+- The manual subtitle re-search no longer silently no-ops: if the player has
+  already failed (or the movie has no TMDB id), tapping the subtitle button
+  says "Tidak bisa mencari subtitle untuk film ini." instead of pretending
+  to search.
+
 ### `2026-08-08` — v1.3.40: remove movies from "Lanjutkan menonton" + subtitles search harder
 
 - **Remove a movie from "Lanjutkan menonton" (X on each card).** The Home
@@ -547,8 +557,9 @@ Semua tab sekarang konsisten mengambang bebas.
 <!-- VERSION-TOC:start -->
 
 <details>
-<summary>📜 Riwayat versi (55)</summary>
+<summary>📜 Riwayat versi (56)</summary>
 
+- [`v1.3.41`](#2026-08-08--v1341-remove-button-polish-bigger-tap-target--honest-retry)
 - [`v1.3.40`](#2026-08-08--v1340-remove-movies-from-lanjutkan-menonton--subtitles-search-harder)
 - [`v1.3.39`](#2026-08-08--v1339-home-capsule-floats-over-content-again--subtitles-get-the-real-titleyear)
 - [`v1.3.38`](#2026-08-08--v1338-home-cards-identical-to-search--subtitle-fetch-never-skipped)
