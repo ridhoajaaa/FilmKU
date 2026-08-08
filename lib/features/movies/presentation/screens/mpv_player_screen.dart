@@ -259,8 +259,13 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
   final ValueNotifier<String?> _subtitleNotice = ValueNotifier<String?>(null);
 
   /// True once the external-subtitle outcome toast has been shown (one per
-  /// session, so a resume doesn't re-toast).
+  /// session, so a resume doesn't re-toast). Reset by the manual
+  /// "cari subtitle" retry so a NEW outcome is toasted again.
   bool _subsResultShown = false;
+
+  /// True while an external-subtitle fetch is in flight — the manual retry
+  /// must not stack a second concurrent fetch on top of the initial one.
+  bool _subsFetchInFlight = false;
 
   /// Watch-progress save throttle: the position stream emits very often, so
   /// progress is persisted at most every [progressSaveInterval] while playing.
@@ -345,16 +350,8 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
   /// best-effort: any failure is swallowed — playback is never affected.
   Future<void> _loadExternalSubtitles() async {
     final tmdbId = widget.args.tmdbId;
-    if (tmdbId == null || _failed) return;
-    // NOTE (2026-08 v1.3.38): the EARLY `_hasRealSubtitleTracks` gate is
-    // gone. It ran BEFORE the fetch and could silently skip the ONLY real
-    // subtitle source when a stream reports phantom tracks (2vcdn's
-    // `#EXT-X-MEDIA` lists carry no subtitle variants, yet mpv enumerates
-    // `subtitle=2` placeholders with a title) — the movie then had nothing
-    // to render. The external fetch now ALWAYS runs in the background; the
-    // post-fetch gate below still refuses to override streams that genuinely
-    // render native subtitle tracks. Best-effort either way — playback is
-    // never delayed or blocked by it.
+    if (tmdbId == null || _failed || _subsFetchInFlight) return;
+    _subsFetchInFlight = true;
     try {
       // Live-verified 2026-08: the YIFY chain (4 sequential HTTP calls incl.
       // the Cloudflare-protected .zip) resolves in ~1.4s from a wired
@@ -396,7 +393,23 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
     } catch (error) {
       appLog('FILMKU_SUBS', 'failed tmdbId=$tmdbId $error');
       _notifySubsResult(false);
+    } finally {
+      _subsFetchInFlight = false;
     }
+  }
+
+  /// Manual "cari subtitle" retry from the controls overlay: re-runs the
+  /// external-subtitle fetch on demand (the background fetch may have failed
+  /// on a transient network blip, or the movie's subtitle only exists on a
+  /// release the auto-probe missed). Re-arms the outcome toast so the user
+  /// sees the fresh result.
+  void _requestExternalSubtitles() {
+    if (_subsFetchInFlight) {
+      _subtitleNotice.value = 'Subtitle masih dicari…';
+      return;
+    }
+    _subsResultShown = false;
+    unawaited(_loadExternalSubtitles());
   }
 
   /// Whether [tracks] carries REAL subtitle tracks — i.e. any track with a
@@ -894,6 +907,7 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
                   onTogglePortrait: _togglePortrait,
                   portraitMode: _portraitMode,
                   notice: _subtitleNotice,
+                  onRequestSubtitles: _requestExternalSubtitles,
                 )
               : const ColoredBox(color: Colors.black),
         ),

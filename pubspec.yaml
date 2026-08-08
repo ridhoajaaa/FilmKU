@@ -1,7 +1,7 @@
 name: filmku
 description: "FilmKU — an ad-free movie streaming app. Dark, fast, and clean."
 publish_to: "none"
-version: 1.3.39+12
+version: 1.3.40+13
 
 environment:
   sdk: ">=3.3.0 <4.0.0"

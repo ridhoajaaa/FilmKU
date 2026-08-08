@@ -60,6 +60,9 @@ class ContinueWatchingRow extends ConsumerWidget {
               entry: entries[index],
               onResumed: () =>
                   ref.read(watchProgressProvider.notifier).refresh(),
+              onRemove: () => ref
+                  .read(watchProgressProvider.notifier)
+                  .remove(entries[index].movieId),
             ),
           ),
         ),
@@ -69,13 +72,22 @@ class ContinueWatchingRow extends ConsumerWidget {
 }
 
 class _ContinueCard extends StatelessWidget {
-  const _ContinueCard({required this.entry, required this.onResumed});
+  const _ContinueCard({
+    required this.entry,
+    required this.onResumed,
+    required this.onRemove,
+  });
 
   final WatchProgress entry;
 
   /// Called after the player route pops, so the row reflects the fresh
   /// position (or the entry is removed once the movie is finished).
   final VoidCallback onResumed;
+
+  /// Removes this entry from "Lanjutkan menonton" (the row updates instantly
+  /// via the watch-progress provider) — so a movie you don't plan to finish
+  /// doesn't pile up forever.
+  final VoidCallback onRemove;
 
   @override
   Widget build(BuildContext context) {
@@ -135,6 +147,29 @@ class _ContinueCard extends StatelessWidget {
                     color: Colors.white,
                     size: 40,
                     shadows: [Shadow(color: Colors.black54, blurRadius: 8)],
+                  ),
+                ),
+                // Remove button (top-left, opposite the position pill) so a
+                // movie you don't plan to finish can be dropped from
+                // "Lanjutkan menonton" without piling up. Its own
+                // GestureDetector wins the hit-test over the card's tap.
+                Positioned(
+                  top: 6,
+                  left: 6,
+                  child: GestureDetector(
+                    onTap: onRemove,
+                    child: Container(
+                      padding: const EdgeInsets.all(4),
+                      decoration: const BoxDecoration(
+                        color: Colors.black54,
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(
+                        Icons.close_rounded,
+                        color: Colors.white,
+                        size: 16,
+                      ),
+                    ),
                   ),
                 ),
               ],

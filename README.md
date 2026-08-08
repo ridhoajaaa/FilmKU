@@ -405,6 +405,27 @@ flutter doctor   # Android toolchain should be green
 
 ## 📝 Changelog
 
+### `2026-08-08` — v1.3.40: remove movies from "Lanjutkan menonton" + subtitles search harder
+
+- **Remove a movie from "Lanjutkan menonton" (X on each card).** The Home
+  continue-watching row piled up movies you started but never finished —
+  there was no way to drop one. Each card now has a small **X button in its
+  top-left corner** (opposite the position pill): tap it and the entry
+  disappears instantly (powered by the existing `WatchProgressService`/`-
+  provider `remove`, so it stays removed across restarts).
+- **SubtitleCat release pages now probed in PARALLEL batches.** The old loop
+  fetched up to 8 release detail pages SEQUENTIALLY — on a mobile network
+  (2-5s/page) the chain could blow past its 25s budget BEFORE reaching the
+  release that actually carries Indonesian, so "some movies" showed no
+  subtitle even though one existed on a later release page. Now up to 6
+  pages are fetched in parallel batches of 3 (per-page 10s cap), same probe
+  width, fraction of the budget.
+- **Subtitle button now re-searches on demand.** When a stream has no
+  subtitle track, tapping the subtitle button runs a FRESH external search
+  ("Mencari subtitle…") instead of a dead "tidak tersedia" toast — so a
+  transient network blip that failed the background fetch on first open can
+  be recovered mid-play without restarting the movie.
+
 ### `2026-08-08` — v1.3.39: Home capsule floats over content again + subtitles get the real title/year
 
 - **iOS Home capsule floats over the cards again (pixel-verified geometry).**
@@ -526,8 +547,9 @@ Semua tab sekarang konsisten mengambang bebas.
 <!-- VERSION-TOC:start -->
 
 <details>
-<summary>📜 Riwayat versi (54)</summary>
+<summary>📜 Riwayat versi (55)</summary>
 
+- [`v1.3.40`](#2026-08-08--v1340-remove-movies-from-lanjutkan-menonton--subtitles-search-harder)
 - [`v1.3.39`](#2026-08-08--v1339-home-capsule-floats-over-content-again--subtitles-get-the-real-titleyear)
 - [`v1.3.38`](#2026-08-08--v1338-home-cards-identical-to-search--subtitle-fetch-never-skipped)
 - [`v1.3.37`](#2026-08-08--v1337-subtitles-finally-appear-again-parallel-yify--subtitlecat)

@@ -330,48 +330,82 @@ class SubtitleDatasource {
     debugPrint('FILMKU_SUBS_SEARCH query="$query" '
         'pageBytes=${searchHtml.length} slugs=${slugs.length}');
     if (slugs.isEmpty) return null;
-    // Try up to 8 release groups — the first page usually has a subtitle,
+    return _trySubcatDetailPages(slugs);
+  }
+
+  /// Probes the SubtitleCat release detail pages in PARALLEL batches and
+  /// returns the first subtitle found (Indonesian → English → any).
+  ///
+  /// 2026-08 "some movies have no subtitles" root cause: the OLD loop probed
+  /// up to 8 release pages SEQUENTIALLY, and on a mobile network (2-5s per
+  /// page) the chain blew past the [subcatTimeout] budget BEFORE reaching the
+  /// release that actually carries Indonesian — the movie then showed no
+  /// subtitle even though one existed on a later release page. Batching in
+  /// parallel (with a per-page budget so one hung page can't stall its
+  /// batch) fits the same probe width into a fraction of the budget.
+  Future<SubtitleInfo?> _trySubcatDetailPages(List<String> slugs) async {
+    const batchSize = 3;
+    const perPageTimeout = Duration(seconds: 10);
+    // Try up to 6 release groups — the first page usually has a subtitle,
     // but some releases only carry a few languages (a 2026-08 probe of a
     // popular movie found 55 release pages; Indonesian appeared only on
-    // SOME of them). 8 > 5 widens the net for old/obscure films without
+    // SOME of them). 6 > 5 widens the net for old/obscure films without
     // ballooning the request count.
-    for (final slug in slugs.take(8)) {
-      try {
-        final detail = await _getText('https://subtitlecat.com/$slug');
-        final links = parseSubtitleCatSrtLinks(detail);
-        if (links.isEmpty) continue;
-        final pick = links.firstWhere(
-          (l) => l.language == 'id',
-          orElse: () => links.firstWhere(
-            (l) => l.language == 'en',
-            orElse: () => links.first,
-          ),
-        );
-        final srt = await _getText('https://subtitlecat.com${pick.path}');
-        // ignore: avoid_print
-        debugPrint('FILMKU_SUBS_SLUG lang=${pick.language} '
-            'links=${links.length} srtBytes=${srt.length} slug=$slug');
-        if (srt.trim().isEmpty) continue;
-        // Defensive: a 200 HTML page (error/redirect shell) is NOT a
-        // subtitle — never hand the player garbage text.
-        final head =
-            srt.trimLeft().substring(0, math.min(srt.trimLeft().length, 64));
-        final lowerHead = head.toLowerCase();
-        if (lowerHead.startsWith('<!doctype') ||
-            lowerHead.startsWith('<html')) {
-          continue;
-        }
-        return SubtitleInfo(
-          title: pick.label,
-          language: pick.language,
-          data: srt,
-        );
-      } catch (_) {
-        // One release page failed (timeout/404) — try the next one.
-        continue;
+    final pageSlugs = slugs.take(6).toList();
+    for (var i = 0; i < pageSlugs.length; i += batchSize) {
+      final batch = pageSlugs.sublist(
+        i,
+        math.min(i + batchSize, pageSlugs.length),
+      );
+      final results = await Future.wait(<Future<SubtitleInfo?>>[
+        for (final slug in batch)
+          _trySubcatDetailPage(slug)
+              .timeout(perPageTimeout, onTimeout: () => null),
+      ]);
+      for (final result in results) {
+        if (result != null) return result;
       }
     }
     return null;
+  }
+
+  /// One SubtitleCat release detail page: find its `.srt` links, download the
+  /// best one (Indonesian → English → any). Any failure returns null — one
+  /// bad page must never abort the batch.
+  Future<SubtitleInfo?> _trySubcatDetailPage(String slug) async {
+    try {
+      final detail = await _getText('https://subtitlecat.com/$slug');
+      final links = parseSubtitleCatSrtLinks(detail);
+      if (links.isEmpty) return null;
+      final pick = links.firstWhere(
+        (l) => l.language == 'id',
+        orElse: () => links.firstWhere(
+          (l) => l.language == 'en',
+          orElse: () => links.first,
+        ),
+      );
+      final srt = await _getText('https://subtitlecat.com${pick.path}');
+      // ignore: avoid_print
+      debugPrint('FILMKU_SUBS_SLUG lang=${pick.language} '
+          'links=${links.length} srtBytes=${srt.length} slug=$slug');
+      if (srt.trim().isEmpty) return null;
+      // Defensive: a 200 HTML page (error/redirect shell) is NOT a subtitle
+      // — never hand the player garbage text.
+      final head =
+          srt.trimLeft().substring(0, math.min(srt.trimLeft().length, 64));
+      final lowerHead = head.toLowerCase();
+      if (lowerHead.startsWith('<!doctype') || lowerHead.startsWith('<html')) {
+        return null;
+      }
+      return SubtitleInfo(
+        title: pick.label,
+        language: pick.language,
+        data: srt,
+      );
+    } catch (_) {
+      // One release page failed (timeout/404) — the batch moves on.
+      return null;
+    }
   }
 
   Future<String?> _fetchImdbId(int tmdbId) async {

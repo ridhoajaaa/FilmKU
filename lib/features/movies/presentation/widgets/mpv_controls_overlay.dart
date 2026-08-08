@@ -37,6 +37,7 @@ class MpvControlsOverlay extends StatefulWidget {
     this.onTogglePortrait,
     this.portraitMode = false,
     this.notice,
+    this.onRequestSubtitles,
   });
 
   final VideoController controller;
@@ -60,6 +61,13 @@ class MpvControlsOverlay extends StatefulWidget {
   /// outcomes). Non-null values are shown as a brief toast in the UPPER
   /// area (below the top bar), never centered.
   final ValueNotifier<String?>? notice;
+
+  /// Re-runs the owning screen's external-subtitle search on demand — wired
+  /// so tapping the subtitle button when the stream has NO tracks offers a
+  /// live "cari subtitle" instead of a dead "tidak tersedia" toast (the
+  /// background fetch may have missed on a transient blip, 2026-08). Null
+  /// keeps the old static "not available" message.
+  final VoidCallback? onRequestSubtitles;
 
   /// Speed presets offered in the settings sheet. Exposed for tests.
   static const List<double> speedOptions = [
@@ -461,11 +469,17 @@ class _MpvControlsOverlayState extends State<MpvControlsOverlay> {
     if (_subtitleTracks.isEmpty) {
       _armHideTimer();
       // 2026-08: streams without a subtitle track used to toggle nothing
-      // visible (read as "broken"). Tell the user honestly. A transient
-      // "tidak tersedia" during the first second of track enumeration is
-      // a smaller sin than silence (a duration-based gate could swallow the
-      // toast forever when mpv never reports a duration).
-      _showToast('Subtitel tidak tersedia untuk stream ini.');
+      // visible (read as "broken"). Tell the user honestly. When the owning
+      // screen can search EXTERNALLY (YIFY/SubtitleCat), offer that as a
+      // live action — tapping again re-runs the search instead of a dead
+      // "tidak tersedia" message (a transient blip can have failed the
+      // background fetch on the first try).
+      if (widget.onRequestSubtitles != null) {
+        _showToast('Mencari subtitle…');
+        widget.onRequestSubtitles!();
+      } else {
+        _showToast('Subtitel tidak tersedia untuk stream ini.');
+      }
       return;
     }
     _subtitleVisible.value = !_subtitleVisible.value;
