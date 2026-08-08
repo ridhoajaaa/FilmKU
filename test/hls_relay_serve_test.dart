@@ -143,17 +143,14 @@ void main() {
     expect(vtt, contains('Hello world'));
     expect(vtt, contains('Second cue'));
   });
-  test('master playlist is NEVER modified (HLS injection regression guard)',
+  test(
+      'master gets an injected HLS subtitle track pointing at the PLAYLIST (not a bare .vtt)',
       () async {
-    // v1.3.45 injected an EXT-X-MEDIA SUBTITLES track into the master — the
-    // ffmpeg hls demuxer used by mpv's Android build rejected the whole
-    // playlist (video never started: durationKnownMs=0, STARTUP_TIMEOUT,
-    // verified with ffmpeg: `parse_playlist error Invalid argument`). The
-    // relay must serve the master VERBATIM (v1.3.44 behavior). This guard
-    // runs with AND without a tmdbId in the query AND with a registered
-    // subtitle slot — none of them may alter the master.
-    HlsRelay.instance
-        .serveSubtitle(1339713, '1\n00:00:01,000 --> 00:00:02,000\nX\n');
+    // v1.3.45 lesson: the EXT-X-MEDIA URI must point at a subtitle PLAYLIST
+    // (.m3u8) — a bare .vtt URI makes ffmpeg's hls demuxer try to parse the
+    // WebVTT content AS a playlist, fail (`parse_playlist error Invalid
+    // argument`), and reject the whole master (video never started). The
+    // injected URI here must end with filmku-sub.m3u8.
     final cdn = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final base = 'http://127.0.0.1:${cdn.port}';
     cdn.listen((request) async {
@@ -167,26 +164,113 @@ void main() {
     try {
       final relayUrl = await HlsRelay.instance.serve('$base/master.m3u8');
       expect(relayUrl, isNotNull);
+      // The player appends tmdbId to the relay URL (the injection trigger).
+      final uri = Uri.parse(relayUrl!).replace(queryParameters: {
+        ...Uri.parse(relayUrl).queryParameters,
+        'tmdbId': '1339713',
+      });
       final client = HttpClient();
       try {
-        for (final withTmdb in [false, true]) {
-          var uri = Uri.parse(relayUrl!);
-          if (withTmdb) {
-            uri = uri.replace(queryParameters: {
-              ...uri.queryParameters,
-              'tmdbId': '1339713',
-            });
-          }
-          final masterText = await client
-              .getUrl(uri)
-              .then((r) => r.close())
-              .then(utf8.decodeStream);
-          expect(masterText, isNot(contains('#EXT-X-MEDIA:TYPE=SUBTITLES')),
-              reason: 'master must stay verbatim (withTmdb=$withTmdb)');
-          expect(masterText, isNot(contains('filmku-sub.vtt')),
-              reason: 'master must stay verbatim (withTmdb=$withTmdb)');
-          expect(masterText.startsWith('#EXTM3U\n'), isTrue);
-        }
+        final masterText = await client
+            .getUrl(uri)
+            .then((r) => r.close())
+            .then(utf8.decodeStream);
+        expect(masterText, contains('#EXT-X-MEDIA:TYPE=SUBTITLES'));
+        expect(masterText, contains('GROUP-ID="filmku"'));
+        // CRITICAL: URI points at the PLAYLIST, not the .vtt segment.
+        expect(masterText, contains('filmku-sub.m3u8?tmdbId=1339713'));
+        expect(masterText, isNot(contains('filmku-sub.vtt?tmdbId')),
+            reason: 'EXT-X-MEDIA URI must be a playlist, not a .vtt file');
+        expect(masterText, contains('SUBTITLES="filmku"'));
+        expect(masterText, contains('DEFAULT=NO'));
+        // HLS spec: #EXTM3U MUST remain the very first line.
+        expect(masterText.startsWith('#EXTM3U\n'), isTrue,
+            reason: '#EXTM3U must stay the first line');
+        final header = masterText.split('\n');
+        expect(header[1], contains('#EXT-X-MEDIA:TYPE=SUBTITLES'));
+      } finally {
+        client.close(force: true);
+      }
+    } finally {
+      await HlsRelay.instance.dispose();
+      await cdn.close(force: true);
+    }
+  });
+
+  test('master has NO injected subtitle track without tmdbId', () async {
+    HlsRelay.instance
+        .serveSubtitle(1339713, '1\n00:00:01,000 --> 00:00:02,000\nX\n');
+    final cdn = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final base = 'http://127.0.0.1:${cdn.port}';
+    cdn.listen((request) async {
+      request.response.headers.contentType =
+          ContentType('application', 'vnd.apple.mpegurl');
+      request.response.write('#EXTM3U\n'
+          '#EXT-X-STREAM-INF:BANDWIDTH=1000\n'
+          'variant.m3u8\n');
+      await request.response.close();
+    });
+    try {
+      final relayUrl = await HlsRelay.instance.serve('$base/master.m3u8');
+      expect(relayUrl, isNotNull);
+      final client = HttpClient();
+      try {
+        // No tmdbId in the query — even though a slot IS registered, the
+        // master must stay verbatim (injection is opt-in via the URL).
+        final masterText = await client
+            .getUrl(Uri.parse(relayUrl!))
+            .then((r) => r.close())
+            .then(utf8.decodeStream);
+        expect(masterText, isNot(contains('#EXT-X-MEDIA:TYPE=SUBTITLES')));
+        expect(masterText, isNot(contains('filmku-sub.m3u8')));
+      } finally {
+        client.close(force: true);
+      }
+    } finally {
+      await HlsRelay.instance.dispose();
+      await cdn.close(force: true);
+    }
+  });
+
+  test('subtitle PLAYLIST route serves valid HLS with the .vtt segment',
+      () async {
+    const srt = '1\n00:00:01,000 --> 00:00:02,000\nSubtitle here\n';
+    HlsRelay.instance.serveSubtitle(1339713, srt);
+    final cdn = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final base = 'http://127.0.0.1:${cdn.port}';
+    cdn.listen((request) async {
+      request.response.write('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1000\n'
+          'variant.m3u8\n');
+      await request.response.close();
+    });
+    try {
+      final relayUrl = await HlsRelay.instance.serve('$base/master.m3u8');
+      expect(relayUrl, isNotNull);
+      final client = HttpClient();
+      try {
+        final port = Uri.parse(relayUrl!).port;
+        final resp = await client
+            .getUrl(Uri.parse(
+                'http://127.0.0.1:$port/filmku-sub.m3u8?tmdbId=1339713'))
+            .then((r) => r.close());
+        expect(resp.statusCode, HttpStatus.ok);
+        expect(resp.headers.contentType?.mimeType,
+            'application/vnd.apple.mpegurl');
+        final body = await utf8.decodeStream(resp);
+        expect(body.startsWith('#EXTM3U\n'), isTrue);
+        expect(body, contains('filmku-sub.vtt?tmdbId=1339713'));
+        expect(body, contains('#EXT-X-ENDLIST'));
+        // The segment (the .vtt route) is reachable and serves the SRT as
+        // WebVTT.
+        final vttResp = await client
+            .getUrl(Uri.parse(
+                'http://127.0.0.1:$port/filmku-sub.vtt?tmdbId=1339713'))
+            .then((r) => r.close());
+        expect(vttResp.statusCode, HttpStatus.ok);
+        final vttBody = await utf8.decodeStream(vttResp);
+        expect(vttBody, startsWith('WEBVTT'));
+        expect(vttBody, contains('00:00:01.000 --> 00:00:02.000'));
+        expect(vttBody, contains('Subtitle here'));
       } finally {
         client.close(force: true);
       }

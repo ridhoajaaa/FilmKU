@@ -462,6 +462,49 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
         return;
       }
       HlsRelay.instance.serveSubtitle(tmdbId, sub.data);
+      final isRelayStream = widget.args.url.startsWith('http://127.0.0.1:');
+      if (isRelayStream) {
+        // The injected HLS subtitle track was enumerated at open (title
+        // 'FilmKU Indonesia', pointing at the subtitle PLAYLIST). Wait
+        // briefly for it if the tracks event hasn't arrived yet, then select
+        // it via the native sid path — mpv fetches the playlist + WebVTT
+        // segment and libass renders it. (sub-add is NOT used: the Android
+        // libmpv build rejects every external sub-add form.)
+        SubtitleTrack? injected;
+        final deadline = DateTime.now().add(const Duration(seconds: 3));
+        while (injected == null && DateTime.now().isBefore(deadline)) {
+          final matches = _player.state.tracks.subtitle
+              .where((t) => (t.title?.trim() ?? '').startsWith('FilmKU'))
+              .toList();
+          if (matches.isNotEmpty) {
+            injected = matches.first;
+          } else {
+            await Future<void>.delayed(const Duration(milliseconds: 200));
+          }
+        }
+        if (injected == null) {
+          // The injected track didn't enumerate (platform/demuxer quirk) —
+          // fall back to the best-effort HTTP sub-add path instead of giving
+          // up: harmless on Android (its reduced libmpv rejects sub-add
+          // anyway, so the status quo is preserved) and can actually save
+          // subtitles on iOS where the fuller libmpv may accept an http URL
+          // even when the HLS track never surfaces (reviewer finding).
+          appLog(
+              'FILMKU_SUBS',
+              'injected HLS track not enumerated tmdbId=$tmdbId '
+                  '(falling back to sub-add)');
+        } else {
+          await _player.setSubtitleTrack(injected);
+          appLog(
+            'FILMKU_SUBS_ATTACHED',
+            '${sub.language} ${sub.data.length} chars via HLS sid='
+                '${injected.id} tmdbId=$tmdbId',
+          );
+          return;
+        }
+      }
+      // Non-relay stream OR injected track not enumerated: best-effort HTTP
+      // sub-add.
       final subUrl = 'http://127.0.0.1:$port/filmku-sub.srt?tmdbId=$tmdbId';
       await _player.setSubtitleTrack(
         SubtitleTrack.uri(subUrl, title: sub.title, language: sub.language),
@@ -474,6 +517,18 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
       appLog('FILMKU_SUBS', 'attach failed tmdbId=$tmdbId $error');
       _notifySubsResult(false);
     }
+  }
+
+  /// Appends `&tmdbId=` to a RELAY stream URL so the relay injects the HLS
+  /// subtitle track into the master playlist. Non-relay URLs pass through
+  /// unchanged (no playlist rewriting happens there).
+  String _urlWithSubtitleTmdb() {
+    final url = widget.args.url;
+    final tmdbId = widget.args.tmdbId;
+    if (tmdbId == null || !url.startsWith('http://127.0.0.1:')) return url;
+    if (url.contains('tmdbId=')) return url;
+    final sep = url.contains('?') ? '&' : '?';
+    return '$url${sep}tmdbId=$tmdbId';
   }
 
   /// Surfaces the external-subtitle outcome ONCE per session as an overlay
@@ -510,9 +565,16 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
       // async load for a network stream — the autoplay may buffer from 0 and
       // the seek gets dropped, which read as "Lanjutkan menonton starts from
       // the beginning" (2026-08). Paused-open → seek → play is deterministic.
+      //
+      // Relay streams also get the tmdbId appended to the master URL so the
+      // relay injects an HLS EXT-X-MEDIA subtitle track (the only subtitle
+      // form the Android libmpv build loads — sub-add rejects every external
+      // form). The injected URI points at a subtitle PLAYLIST (v1.3.45
+      // lesson: a bare .vtt URI makes ffmpeg's hls demuxer reject the whole
+      // master; the .m3u8 playlist route keeps the video playing).
       await _player.open(
         Media(
-          widget.args.url,
+          _urlWithSubtitleTmdb(),
           httpHeaders: widget.args.httpHeaders,
         ),
         play: false,
@@ -834,6 +896,13 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
     _positionSub?.cancel();
     _tracksSub?.cancel();
     _subtitleNotice.dispose();
+    // Free the relay's in-memory subtitle slot for this movie (a fresh open
+    // re-registers it; without this, SRTs of every played movie linger in
+    // memory across sessions — reviewer finding 2026-08).
+    final tmdbId = widget.args.tmdbId;
+    if (tmdbId != null) {
+      HlsRelay.instance.clearSubtitle(tmdbId);
+    }
     // Persist where the user stopped (continue-watching), then release the
     // screen-awake lock + restore the system brightness.
     _saveProgress();

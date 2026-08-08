@@ -405,6 +405,28 @@ flutter doctor   # Android toolchain should be green
 
 ## 📝 Changelog
 
+### `2026-08-08` — v1.3.47: HLS subtitle injection REDONE — URI points at a PLAYLIST, video keeps playing
+
+- **v1.3.45's actual bug, finally understood (verified with ffmpeg on the
+  laptop):** the injected `#EXT-X-MEDIA` URI pointed at a BARE `.vtt` file.
+  ffmpeg's hls demuxer (mpv's Android backend) tries to parse the URI's
+  content AS a playlist — a WebVTT file fails with `parse_playlist error
+  Invalid argument` and the demuxer REJECTS the whole master (video never
+  started). HLS spec: the EXT-X-MEDIA URI must point at a subtitle
+  **PLAYLIST** (.m3u8).
+- **Fix:** new relay route `/filmku-sub.m3u8` serves an always-valid HLS
+  subtitle playlist (TARGETDURATION + one `filmku-sub.vtt?tmdbId=` segment);
+  the injected `#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="filmku"` now points at
+  that playlist. ffmpeg parses the master fine → video plays → the player
+  selects the enumerated 'FilmKU Indonesia' track (~2s in, when the SRT is
+  registered) → mpv fetches the playlist + WebVTT segment (SRT→WebVTT in
+  the relay) → libass renders. `#EXTM3U` stays first; injection is opt-in
+  via the player-appended `tmdbId` query (stale-field fallback removed).
+- If the injected track never enumerates (platform quirk), the player falls
+  back to best-effort HTTP `sub-add` (harmless on Android, can save iOS).
+  Subtitle slot is cleared on player dispose. 7 relay tests (incl. the
+  URI-must-be-playlist assertion), 266/266 pass.
+
 ### `2026-08-08` — v1.3.46: REVERT v1.3.45 — HLS track injection broke video playback
 
 - **Regression fixed.** v1.3.45 injected an `#EXT-X-MEDIA:TYPE=SUBTITLES`
@@ -657,8 +679,9 @@ Semua tab sekarang konsisten mengambang bebas.
 <!-- VERSION-TOC:start -->
 
 <details>
-<summary>📜 Riwayat versi (61)</summary>
+<summary>📜 Riwayat versi (62)</summary>
 
+- [`v1.3.47`](#2026-08-08--v1347-hls-subtitle-injection-redone--uri-points-at-a-playlist-video-keeps-playing)
 - [`v1.3.46`](#2026-08-08--v1346-revert-v1345--hls-track-injection-broke-video-playback)
 - [`v1.3.45`](#2026-08-08--v1345-subtitles-injected-as-hls-tracks--the-android-proof-attach)
 - [`v1.3.44`](#2026-08-08--v1344-subtitles-served-over-the-local-relay--mpv-finally-renders-them)
