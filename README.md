@@ -429,6 +429,40 @@ flutter doctor   # Android toolchain should be green
   Subtitle slot is cleared on player dispose. 7 relay tests (incl. the
   URI-must-be-playlist assertion), 266/266 pass.
 
+### `2026-08-08` — v1.3.50: pre-register subtitles BEFORE open — the eager-probe cache race is dead
+
+- **THE actual root cause, proven on-device (v1.3.49 logcat):** mpv's hls
+  demuxer EAGERLY probes the injected `EXT-X-MEDIA` track right after open —
+  it fetches the subtitle playlist AND the first segment ~1-2s after open,
+  which is ~3s BEFORE the background fetch registers the SRT:
+  `FILMKU_RELAY_SUB_PLAYLIST` 18:12:38 → `FILMKU_RELAY_SUB_VTT bytes=8`
+  18:12:39 (8 bytes = the EMPTY `WEBVTT\n\n` placeholder) →
+  `FILMKU_SUBS_ATTACHED` 18:12:42. The probe CACHED that empty WebVTT, and
+  selecting `sid=1` later shows the cached empty stream — a VOD playlist
+  (`#EXT-X-ENDLIST`) is never reloaded, so the empty content is never
+  replaced. Every previous "fix" logged success because the entire attach
+  chain DID run — the content was just cached-empty from the start.
+- **Fix (deterministic):** for relay streams the player now fetches + registers
+  the external subtitle on the relay BEFORE calling `open` (`_prepareSubtitleSlot`,
+  bounded to 10s so playback is never delayed much). The eager probe then
+  caches the REAL WebVTT instead of the empty placeholder — selecting the
+  track after open renders the real subtitles. New log `FILMKU_SUBS_SLOT`
+  proves the pre-register; `FILMKU_RELAY_SUB_VTT bytes=~1400` (was 8) proves
+  the probe cached real content.
+
+### `2026-08-08` — v1.3.49: relay request logging for on-device subtitle diagnosis
+
+- Desktop mpv 0.36.0 (the SAME version as the Android libmpv, verified by
+  `strings` on `libmpv.so` inside the APK: `ff_webvtt_demuxer`,
+  `ff_webvtt_decoder`, `ff_srt_decoder`, `ff_ass_demuxer` all present)
+  PROVEN via a local relay replica: it fetches + decodes + renders the
+  injected HLS WebVTT track both with `--sid=1` at startup AND via the
+  `sid` property change after open (exactly how media_kit attaches). Yet
+  Android showed nothing — the missing piece was on-device evidence of what
+  the Android mpv actually requests. The relay now logs
+  `FILMKU_RELAY_SUB_PLAYLIST` / `FILMKU_RELAY_SUB_VTT` (tmdbId + bytes) —
+  which produced the smoking gun above.
+
 ### `2026-08-08` — v1.3.48: find the injected track by ID, not title — Android subtitles finally render
 
 - **v1.3.47's one remaining bug (on-device logcat):** the injected HLS track
@@ -700,10 +734,12 @@ Semua tab sekarang konsisten mengambang bebas.
 <!-- VERSION-TOC:start -->
 
 <details>
-<summary>📜 Riwayat versi (64)</summary>
+<summary>📜 Riwayat versi (66)</summary>
 
 - [`v1.3.49`](#2026-08-08--v1349-isi-changelog-di-sini)
 - [`v1.3.47`](#2026-08-08--v1347-hls-subtitle-injection-redone--uri-points-at-a-playlist-video-keeps-playing)
+- [`v1.3.50`](#2026-08-08--v1350-pre-register-subtitles-before-open--the-eager-probe-cache-race-is-dead)
+- [`v1.3.49`](#2026-08-08--v1349-relay-request-logging-for-on-device-subtitle-diagnosis)
 - [`v1.3.48`](#2026-08-08--v1348-find-the-injected-track-by-id-not-title--android-subtitles-finally-render)
 - [`v1.3.46`](#2026-08-08--v1346-revert-v1345--hls-track-injection-broke-video-playback)
 - [`v1.3.45`](#2026-08-08--v1345-subtitles-injected-as-hls-tracks--the-android-proof-attach)

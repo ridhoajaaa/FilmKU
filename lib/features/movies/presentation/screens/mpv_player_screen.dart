@@ -269,6 +269,11 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
   /// must not stack a second concurrent fetch on top of the initial one.
   bool _subsFetchInFlight = false;
 
+  /// The external subtitle fetched BEFORE the relay stream opened (see
+  /// [_prepareSubtitleSlot]) — attached right after open, once the injected
+  /// HLS track is enumerated.
+  SubtitleInfo? _externalSub;
+
   /// Watch-progress save throttle: the position stream emits very often, so
   /// progress is persisted at most every [progressSaveInterval] while playing.
   static const Duration progressSaveInterval = Duration(seconds: 5);
@@ -321,11 +326,32 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
     _listenForErrors();
     _listenForPlayback();
     if (session.fresh) {
+      // Relay streams: fetch + register the external subtitle BEFORE open.
+      // 2026-08 on-device root cause (v1.3.49 logcat): mpv's hls demuxer
+      // EAGERLY probes the injected EXT-X-MEDIA track ~1-2s after open and
+      // caches its first segment — ~3s before the background fetch registers
+      // the SRT, so it caches an EMPTY WebVTT and selecting the track later
+      // shows nothing (FILMKU_RELAY_SUB_VTT bytes=8, the smoking gun).
+      // Pre-registering the slot wins that race deterministically (see
+      // [_prepareSubtitleSlot]).
+      final isRelayStream = widget.args.url.startsWith('http://127.0.0.1:');
+      if (isRelayStream && widget.args.tmdbId != null) {
+        await _prepareSubtitleSlot();
+      }
       await _open();
-      // Streams rarely carry subtitle tracks (2vcdn has none) — fetch an
-      // EXTERNAL subtitle (Indonesian, keyless YIFY) in the background so
-      // playback is never delayed by it.
-      unawaited(_loadExternalSubtitles());
+      if (_externalSub != null && widget.args.tmdbId != null) {
+        final sub = _externalSub!;
+        final tmdbId = widget.args.tmdbId!;
+        unawaited(() async {
+          await _attachExternalSubtitle(sub, tmdbId: tmdbId);
+          _notifySubsResult(true, language: sub.language);
+        }());
+      } else {
+        // Streams rarely carry subtitle tracks (2vcdn has none) — fetch an
+        // EXTERNAL subtitle (Indonesian, keyless YIFY) in the background so
+        // playback is never delayed by it.
+        unawaited(_loadExternalSubtitles());
+      }
     } else {
       // Resumed from the mini player: seed the playback evidence from the
       // LIVE position. If the stream already advanced past zero it is proven
@@ -346,26 +372,21 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
     }
   }
 
-  /// Fetches an EXTERNAL subtitle for the movie (Indonesian preferred, then
-  /// English) and attaches it via media_kit's `SubtitleTrack.data`. Only runs
-  /// when the stream itself has NO subtitle tracks (native wins). Background
-  /// best-effort: any failure is swallowed — playback is never affected.
-  Future<void> _loadExternalSubtitles() async {
+  /// Fetches the EXTERNAL subtitle for the movie (Indonesian preferred, then
+  /// English). Live-verified 2026-08: the YIFY chain (4 sequential HTTP
+  /// calls incl. the Cloudflare-protected .zip) resolves in ~1.4s from a
+  /// wired connection but can be much slower on mobile networks — 40s keeps
+  /// it best-effort but survives mobile. Returns null on any failure (never
+  /// throws) — playback is never affected.
+  Future<SubtitleInfo?> _fetchSubtitle() async {
     final tmdbId = widget.args.tmdbId;
-    if (tmdbId == null || _failed || _subsFetchInFlight) return;
-    _subsFetchInFlight = true;
+    if (tmdbId == null || _failed) return null;
+    appLog(
+        'FILMKU_SUBS_START',
+        'tmdbId=$tmdbId title=${widget.args.title} '
+            'year=${widget.args.movieYear ?? '-'} imdb=${widget.args.imdbId ?? '-'}');
     try {
-      // Live-verified 2026-08: the YIFY chain (4 sequential HTTP calls incl.
-      // the Cloudflare-protected .zip) resolves in ~1.4s from a wired
-      // connection but can be much slower on mobile networks — 20s was too
-      // tight and killed the fetch before it finished (the symptom: "no
-      // subtitles" while the laptop probe succeeds). 40s keeps it best-
-      // effort (background, never blocks playback) but survives mobile.
-      appLog(
-          'FILMKU_SUBS_START',
-          'tmdbId=$tmdbId title=${widget.args.title} '
-              'year=${widget.args.movieYear ?? '-'} imdb=${widget.args.imdbId ?? '-'}');
-      final sub = await SubtitleDatasource(
+      return await SubtitleDatasource(
         // Optional subdl.com key (Settings → Subtitles): when set, subdl
         // joins YIFY + SubtitleCat as a THIRD subtitle source.
         subdlApiKey: SettingsService.instance.subdlApiKey,
@@ -377,6 +398,61 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
             imdbId: widget.args.imdbId,
           )
           .timeout(const Duration(seconds: 40));
+    } catch (error) {
+      appLog('FILMKU_SUBS', 'fetch failed tmdbId=$tmdbId $error');
+      return null;
+    }
+  }
+
+  /// Pre-registers the external subtitle on the relay BEFORE the player opens
+  /// a relay stream — the deterministic fix for the subtitle race.
+  ///
+  /// 2026-08 on-device root cause (v1.3.49 logcat): mpv's hls demuxer
+  /// EAGERLY probes the injected EXT-X-MEDIA track right after open — it
+  /// fetches the subtitle playlist + FIRST SEGMENT ~1-2s after open, which
+  /// is ~3s BEFORE the background fetch registers the SRT
+  /// (`FILMKU_RELAY_SUB_PLAYLIST` 18:12:38, `FILMKU_RELAY_SUB_VTT bytes=8`
+  /// 18:12:39, `FILMKU_SUBS_ATTACHED` 18:12:42). The probe caches an EMPTY
+  /// 8-byte WebVTT (`WEBVTT\n\n`), and selecting the track later shows that
+  /// cached empty stream — a VOD playlist (`#EXT-X-ENDLIST`) is never
+  /// reloaded, so the empty content is never replaced. Hence "no subtitles"
+  /// despite the entire attach chain logging success.
+  ///
+  /// Pre-registering the slot (fetch first, then open) makes the EAGER PROBE
+  /// ITSELF cache the REAL subtitle content — deterministic. Bounded to 10s
+  /// so a slow fetch can never delay playback much; on failure the normal
+  /// background path (with its known race) still runs.
+  Future<void> _prepareSubtitleSlot() async {
+    final tmdbId = widget.args.tmdbId;
+    if (tmdbId == null || _subsFetchInFlight || _externalSub != null) return;
+    _subsFetchInFlight = true;
+    try {
+      final sub = await _fetchSubtitle().timeout(const Duration(seconds: 10));
+      if (!mounted || _failed || sub == null) return;
+      // A stream that genuinely renders native tracks needs no external sub.
+      if (_hasRealSubtitleTracks(_player.state.tracks.subtitle)) return;
+      final port = await HlsRelay.instance.ensureRunning();
+      if (port == null) return;
+      HlsRelay.instance.serveSubtitle(tmdbId, sub.data);
+      _externalSub = sub;
+      appLog('FILMKU_SUBS_SLOT',
+          'pre-registered ${sub.data.length} chars tmdbId=$tmdbId BEFORE open');
+    } catch (error) {
+      appLog('FILMKU_SUBS', 'pre-register failed tmdbId=$tmdbId $error');
+    } finally {
+      _subsFetchInFlight = false;
+    }
+  }
+
+  /// Fetches an EXTERNAL subtitle (Indonesian preferred, then English) and
+  /// attaches it — background best-effort for NON-relay streams and the
+  /// fallback when the pre-register path didn't produce a subtitle.
+  Future<void> _loadExternalSubtitles() async {
+    final tmdbId = widget.args.tmdbId;
+    if (tmdbId == null || _failed || _subsFetchInFlight) return;
+    _subsFetchInFlight = true;
+    try {
+      final sub = await _fetchSubtitle();
       if (!mounted || _failed || sub == null) {
         appLog('FILMKU_SUBS_NULL',
             'tmdbId=$tmdbId mounted=$mounted failed=$_failed');
@@ -390,9 +466,6 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
       if (_hasRealSubtitleTracks(_player.state.tracks.subtitle)) return;
       await _attachExternalSubtitle(sub, tmdbId: tmdbId);
       _notifySubsResult(true, language: sub.language);
-    } catch (error) {
-      appLog('FILMKU_SUBS', 'failed tmdbId=$tmdbId $error');
-      _notifySubsResult(false);
     } finally {
       _subsFetchInFlight = false;
     }
