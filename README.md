@@ -405,6 +405,8 @@ flutter doctor   # Android toolchain should be green
 
 ## 📝 Changelog
 
+### `2026-08-08` — v1.3.49: (isi changelog di sini)
+
 ### `2026-08-08` — v1.3.47: HLS subtitle injection REDONE — URI points at a PLAYLIST, video keeps playing
 
 - **v1.3.45's actual bug, finally understood (verified with ffmpeg on the
@@ -698,8 +700,9 @@ Semua tab sekarang konsisten mengambang bebas.
 <!-- VERSION-TOC:start -->
 
 <details>
-<summary>📜 Riwayat versi (63)</summary>
+<summary>📜 Riwayat versi (64)</summary>
 
+- [`v1.3.49`](#2026-08-08--v1349-isi-changelog-di-sini)
 - [`v1.3.47`](#2026-08-08--v1347-hls-subtitle-injection-redone--uri-points-at-a-playlist-video-keeps-playing)
 - [`v1.3.48`](#2026-08-08--v1348-find-the-injected-track-by-id-not-title--android-subtitles-finally-render)
 - [`v1.3.46`](#2026-08-08--v1346-revert-v1345--hls-track-injection-broke-video-playback)

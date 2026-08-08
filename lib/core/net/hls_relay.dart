@@ -5,6 +5,8 @@ import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 
+import '../utils/app_logger.dart';
+
 /// Result of a playlist rewrite: the rewritten text plus a validity flag
 /// (a playlist is invalid when it contains no media URI to rewrite — e.g.
 /// the CDN returned an error page).
@@ -292,6 +294,8 @@ class HlsRelay {
   /// selects the track after registration).
   Future<void> _serveSubtitlePlaylist(HttpRequest request) async {
     final id = int.tryParse(request.uri.queryParameters['tmdbId'] ?? '');
+    appLog('FILMKU_RELAY_SUB_PLAYLIST',
+        'tmdbId=$id (did mpv fetch the injected subtitle playlist?)');
     // The segment URI is RELATIVE to the playlist URL (same host/port), so
     // mpv resolves it against the relay without needing an absolute URL.
     final playlist = '#EXTM3U\n'
@@ -316,6 +320,8 @@ class HlsRelay {
     final id = int.tryParse(request.uri.queryParameters['tmdbId'] ?? '');
     final content = id != null ? _subtitleSlots[id] : null;
     final vtt = content == null ? 'WEBVTT\n\n' : HlsRelay.srtToVtt(content);
+    appLog('FILMKU_RELAY_SUB_VTT',
+        'tmdbId=$id bytes=${vtt.length} (did mpv fetch the subtitle segment?)');
     request.response.headers.contentType =
         ContentType('text', 'vtt', charset: 'utf-8');
     request.response.headers.set('Access-Control-Allow-Origin', '*');
