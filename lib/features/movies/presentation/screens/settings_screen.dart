@@ -64,6 +64,44 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     }
   }
 
+  /// Optional subdl.com subtitle API key (free from subdl.com → account →
+  /// API). When set, subdl becomes a THIRD external subtitle source (after
+  /// YIFY + SubtitleCat) — useful for movies neither keyless source covers.
+  Future<void> _editSubdlKey(String current) async {
+    final controller = TextEditingController(text: current);
+    final result = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Subdl API Key'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          obscureText: true,
+          decoration: const InputDecoration(
+            hintText: 'Free key: subdl.com → account → API',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, controller.text.trim()),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+
+    if (result != null && mounted) {
+      ref.read(settingsProvider.notifier).setSubdlApiKey(result);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Subdl key saved.')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final settings = ref.watch(settingsProvider);
@@ -109,6 +147,46 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               trailing: const Icon(Icons.edit, size: 20),
               onTap: () => _editApiKey(settings.apiKey),
             ),
+          const Divider(height: 24),
+          // Optional subdl.com subtitle API key (third subtitle source).
+          if (isIos)
+            GlassGroupedSection(
+              header: const _GlassSectionHeader('Subtitles'),
+              children: [
+                GlassListTile(
+                  leading:
+                      const Icon(Icons.closed_caption, color: Colors.white70),
+                  title: const Text('Subdl API Key (opsional)'),
+                  subtitle: Text(
+                    settings.subdlApiKey.isEmpty
+                        ? 'Tidak diatur — subtitle eksternal dari YIFY + '
+                            'SubtitleCat saja. Gratis: subdl.com → daftar → API'
+                        : '•••••••••••• (tap to edit)',
+                    style: const TextStyle(fontSize: 12, color: Colors.white54),
+                  ),
+                  trailing: const Icon(Icons.edit, size: 20),
+                  onTap: () => _editSubdlKey(settings.subdlApiKey),
+                ),
+              ],
+            )
+          else ...[
+            const _SectionTitle('Subtitles'),
+            ListTile(
+              leading:
+                  const Icon(Icons.closed_caption, color: AppColors.accent),
+              title: const Text('Subdl API Key (opsional)'),
+              subtitle: Text(
+                settings.subdlApiKey.isEmpty
+                    ? 'Tidak diatur — subtitle eksternal dari YIFY + '
+                        'SubtitleCat saja. Gratis: subdl.com → daftar → API'
+                    : '•••••••••••• (tap to edit)',
+                style:
+                    const TextStyle(color: AppColors.textMuted, fontSize: 12),
+              ),
+              trailing: const Icon(Icons.edit, size: 20),
+              onTap: () => _editSubdlKey(settings.subdlApiKey),
+            ),
+          ],
           const Divider(height: 24),
           // iOS: REAL liquid-glass grouped section (shader-based
           // GlassGroupedSection + GlassListTile with a trailing Switch) — the

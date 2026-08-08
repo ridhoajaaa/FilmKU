@@ -38,6 +38,11 @@ class _FakeSubAdapter implements HttpClientAdapter {
   /// 403s it otherwise).
   final Map<String, String?> referers = {};
 
+  /// Authorization header sent for each request path — lets tests assert the
+  /// subdl Bearer auth reaches BOTH the search and the download (subdl 403s
+  /// without it, same class of bug as the YIFY Referer).
+  final Map<String, String?> authorizations = {};
+
   @override
   Future<ResponseBody> fetch(
     RequestOptions options,
@@ -46,6 +51,8 @@ class _FakeSubAdapter implements HttpClientAdapter {
   ) async {
     hits.add(options.uri.path);
     referers[options.uri.path] = options.headers['Referer'] as String?;
+    authorizations[options.uri.path] =
+        options.headers['Authorization'] as String?;
     if (throwing.contains(options.uri.path)) {
       throw DioException(
         requestOptions: options,
@@ -233,6 +240,185 @@ void main() {
       expect(links.length, 1);
       expect(links.first.language, 'xx');
       expect(links.first.path, '/subs/999/Some.Movie.2021.part1.srt');
+    });
+
+    test('parseSubdlSearchResponse parses the documented v2 response', () {
+      const json = '''
+{"status":true,"subtitles":[
+  {"n_id":"sd-abc","release_name":"Spider.Man.2021.1080p.WEB.x264",
+   "lang":"english","match_score":0.95,"url":"..."},
+  {"n_id":"sd-xyz","release_name":"Spider.Man.2021.720p.BluRay.x264",
+   "lang":"indonesian","match_score":0.9,"url":"..."}
+]}
+''';
+      final entries = SubtitleDatasource.parseSubdlSearchResponse(json);
+      expect(entries.length, 2);
+      expect(entries.first.nId, 'sd-abc');
+      expect(entries.first.language, 'en');
+      expect(entries.first.label, 'English');
+      expect(entries.first.releaseName, 'Spider.Man.2021.1080p.WEB.x264');
+      expect(entries.last.language, 'id');
+      expect(entries.last.label, 'Indonesian');
+    });
+
+    test('parseSubdlSearchResponse normalizes language codes and names', () {
+      const json = '''
+{"subtitles":[
+  {"n_id":"1","lang":"id"},
+  {"n_id":"2","lang":"indonesian"},
+  {"n_id":"3","lang":"en"},
+  {"n_id":"4","lang":"english"},
+  {"n_id":"5","lang":"spanish"}
+]}
+''';
+      final entries = SubtitleDatasource.parseSubdlSearchResponse(json);
+      expect(entries.map((e) => e.language).toList(),
+          ['id', 'id', 'en', 'en', 'es']);
+    });
+
+    test('parseSubdlSearchResponse skips entries without an n_id', () {
+      const json = '''
+{"subtitles":[
+  {"release_name":"no id here","lang":"english"},
+  {"n_id":"sd-ok","lang":"indonesian"}
+]}
+''';
+      final entries = SubtitleDatasource.parseSubdlSearchResponse(json);
+      expect(entries.length, 1);
+      expect(entries.single.nId, 'sd-ok');
+      expect(entries.single.language, 'id');
+    });
+
+    test('parseSubdlSearchResponse tolerates garbage and missing lists', () {
+      expect(
+        SubtitleDatasource.parseSubdlSearchResponse('not json at all'),
+        isEmpty,
+      );
+      expect(
+        SubtitleDatasource.parseSubdlSearchResponse('{"status":true}'),
+        isEmpty,
+      );
+      expect(
+        SubtitleDatasource.parseSubdlSearchResponse('{"subtitles":"nope"}'),
+        isEmpty,
+      );
+    });
+  });
+
+  group('SubtitleDatasource subdl chain (third source)', () {
+    (SubtitleDatasource, _FakeSubAdapter) buildSubdl(
+      Map<String, ResponseBody> responses, {
+      String key = 'test-key',
+      Set<String> throwing = const <String>{},
+    }) {
+      final dio = Dio(
+        BaseOptions(responseType: ResponseType.bytes),
+      )..httpClientAdapter = _FakeSubAdapter(responses, throwing: throwing);
+      final ds = SubtitleDatasource(
+        tmdb: ApiClient(dio: Dio()..httpClientAdapter = _FakeSubAdapter({})),
+        dio: dio,
+        subdlApiKey: key,
+        // Tight budgets so a broken subdl can never stall the test.
+        subdlTimeout: const Duration(seconds: 5),
+      );
+      return (
+        ds,
+        dio.httpClientAdapter as _FakeSubAdapter,
+      );
+    }
+
+    const subdlSearchJson = '''
+{"status":true,"subtitles":[
+  {"n_id":"sd-abc","release_name":"Spider.Man.2021.1080p.WEB.x264",
+   "lang":"english","match_score":0.95},
+  {"n_id":"sd-xyz","release_name":"Spider.Man.2021.720p.BluRay.x264",
+   "lang":"indonesian","match_score":0.9}
+]}
+''';
+
+    test('fetches Indonesian via search + format=file download', () async {
+      final (ds, adapter) = buildSubdl({
+        '/api/v2/subtitles/search':
+            ResponseBody.fromBytes(utf8.encode(subdlSearchJson), 200),
+        '/api/v2/subtitles/sd-xyz/download':
+            ResponseBody.fromBytes(utf8.encode(_scSrtContent), 200),
+      });
+      final sub = await ds.fetchSubtitleFromMeta(
+        title: 'Spider-Man: No Way Home',
+        year: '2021',
+      );
+      expect(sub, isNotNull);
+      expect(sub!.language, 'id');
+      expect(sub.title, 'Indonesian');
+      expect(sub.data, _scSrtContent);
+      // The Bearer auth must reach BOTH requests (subdl 403s without it).
+      expect(adapter.authorizations['/api/v2/subtitles/search'],
+          'Bearer test-key');
+      expect(adapter.authorizations['/api/v2/subtitles/sd-xyz/download'],
+          'Bearer test-key');
+    });
+
+    test('downloads via tmdb_id when no imdb is known', () async {
+      final (ds, adapter) = buildSubdl({
+        '/api/v2/subtitles/search':
+            ResponseBody.fromBytes(utf8.encode(subdlSearchJson), 200),
+        '/api/v2/subtitles/sd-xyz/download':
+            ResponseBody.fromBytes(utf8.encode(_scSrtContent), 200),
+      });
+      final sub = await ds.fetchSubtitleFromMeta(tmdbId: 315162);
+      expect(sub, isNotNull);
+      expect(sub!.language, 'id');
+      // tmdb_id + type=movie must be in the query (the fake keys by path
+      // only, so assert via the hits — the search path WAS hit).
+      expect(adapter.hits, contains('/api/v2/subtitles/search'));
+      expect(adapter.hits, contains('/api/v2/subtitles/sd-xyz/download'));
+    });
+
+    test('no key = the subdl chain makes NO requests and returns null',
+        () async {
+      final (ds, adapter) = buildSubdl({}, key: '');
+      final sub = await ds.fetchSubtitleFromMeta(
+        title: 'Spider-Man',
+        year: '2021',
+      );
+      expect(sub, isNull);
+      // YIFY/SubtitleCat still ran (they share the dio) — assert only that
+      // NO subdl endpoint was touched.
+      expect(
+        adapter.hits.where((p) => p.startsWith('/api/v2/subtitles')),
+        isEmpty,
+      );
+    });
+
+    test('a failing subdl chain returns null and never breaks the others',
+        () async {
+      final (ds, _) = buildSubdl(
+        {},
+        throwing: {'/api/v2/subtitles/search'},
+      );
+      final sub = await ds.fetchSubtitleFromMeta(
+        title: 'Spider-Man',
+        year: '2021',
+      );
+      expect(sub, isNull);
+    });
+
+    test('handles a zip response from format=file defensively', () async {
+      final (ds, _) = buildSubdl({
+        '/api/v2/subtitles/search':
+            ResponseBody.fromBytes(utf8.encode(subdlSearchJson), 200),
+        // Some releases only exist as an archive — the API may return zip
+        // bytes even for format=file.
+        '/api/v2/subtitles/sd-xyz/download':
+            ResponseBody.fromBytes(_buildZip(), 200),
+      });
+      final sub = await ds.fetchSubtitleFromMeta(
+        title: 'Spider-Man',
+        year: '2021',
+      );
+      expect(sub, isNotNull);
+      expect(sub!.language, 'id');
+      expect(sub.data, _srtContent);
     });
   });
 

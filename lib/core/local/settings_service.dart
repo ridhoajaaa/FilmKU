@@ -8,6 +8,7 @@ class SettingsService {
   static const String _boxName = 'settings';
 
   static const String keyApiKey = 'tmdb_api_key';
+  static const String keySubdlApiKey = 'subdl_api_key';
   static const String keyHeadless = 'headless_extraction';
   static const String keyFallbackWebview = 'fallback_webview';
 
@@ -34,6 +35,14 @@ class SettingsService {
 
   String get apiKey => (_box.get(keyApiKey) as String?) ?? '';
   Future<void> setApiKey(String value) => _box.put(keyApiKey, value.trim());
+
+  /// Optional subdl.com subtitle API key (free from subdl.com → account →
+  /// API). When set, [SubtitleDatasource] adds subdl as a THIRD subtitle
+  /// source (after YIFY + SubtitleCat) — useful for movies neither of the
+  /// keyless sources covers. Empty = the subdl chain is skipped.
+  String get subdlApiKey => (_box.get(keySubdlApiKey) as String?) ?? '';
+  Future<void> setSubdlApiKey(String value) =>
+      _box.put(keySubdlApiKey, value.trim());
 
   bool get headlessExtraction => (_box.get(keyHeadless) as bool?) ?? true;
   Future<void> setHeadlessExtraction(bool value) =>

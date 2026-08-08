@@ -405,6 +405,26 @@ flutter doctor   # Android toolchain should be green
 
 ## 📝 Changelog
 
+### `2026-08-08` — v1.3.42: third subtitle source (subdl.com, optional free key)
+
+- **Subdl joins YIFY + SubtitleCat as a THIRD external subtitle source** —
+  for movies neither keyless source covers. subdl.com's index inherits the
+  old Subscene database, so its Indonesian coverage fills real gaps.
+- **Optional free API key (Settings → Subtitles).** Like the TMDB key, the
+  subdl key is entered once in Settings: `subdl.com → daftar (free) → API`.
+  Empty key = the subdl chain is skipped entirely — the app stays fully
+  keyless (YIFY + SubtitleCat) and no request is wasted.
+- **Documented v2 API, defensively.** Search `GET /api/v2/subtitles/search`
+  (Bearer auth, `imdb_id`/`tmdb_id`+`type=movie`/`film_name` params),
+  download `GET /api/v2/subtitles/{nId}/download?format=file`. Tolerates zip
+  or plain `.srt` bytes, HTML-shell guard, per-source timeout + error
+  isolation — subdl can never delay or break the keyless sources. No
+  `languages` filter (subdl codes Indonesian as `id` or `ind`; the client
+  prefers Indonesian → English → any on the full result set).
+- **9 new tests** (parse, lang normalization, no-key zero-request, failure
+  isolation, zip fallback, Bearer-auth-on-both-requests). Full suite
+  **261/261**, analyze clean.
+
 ### `2026-08-08` — v1.3.41: remove-button polish (bigger tap target + honest retry)
 
 - The continue-watching **X button now uses a Material/InkWell circle with a
@@ -557,8 +577,9 @@ Semua tab sekarang konsisten mengambang bebas.
 <!-- VERSION-TOC:start -->
 
 <details>
-<summary>📜 Riwayat versi (56)</summary>
+<summary>📜 Riwayat versi (57)</summary>
 
+- [`v1.3.42`](#2026-08-08--v1342-third-subtitle-source-subdlcom-optional-free-key)
 - [`v1.3.41`](#2026-08-08--v1341-remove-button-polish-bigger-tap-target--honest-retry)
 - [`v1.3.40`](#2026-08-08--v1340-remove-movies-from-lanjutkan-menonton--subtitles-search-harder)
 - [`v1.3.39`](#2026-08-08--v1339-home-capsule-floats-over-content-again--subtitles-get-the-real-titleyear)

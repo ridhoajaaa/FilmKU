@@ -11,6 +11,7 @@ import 'package:screen_brightness/screen_brightness.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../../../../core/constants/api_constants.dart';
+import '../../../../core/local/settings_service.dart';
 import '../../../../core/local/watch_history_service.dart';
 import '../../../../core/local/watch_progress_service.dart';
 import '../../../../core/media/mini_player_service.dart';
@@ -363,7 +364,11 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
           'FILMKU_SUBS_START',
           'tmdbId=$tmdbId title=${widget.args.title} '
               'year=${widget.args.movieYear ?? '-'} imdb=${widget.args.imdbId ?? '-'}');
-      final sub = await SubtitleDatasource()
+      final sub = await SubtitleDatasource(
+        // Optional subdl.com key (Settings → Subtitles): when set, subdl
+        // joins YIFY + SubtitleCat as a THIRD subtitle source.
+        subdlApiKey: SettingsService.instance.subdlApiKey,
+      )
           .fetchSubtitleFromMeta(
             tmdbId: tmdbId,
             title: widget.args.title,

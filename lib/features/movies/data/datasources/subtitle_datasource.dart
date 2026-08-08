@@ -65,6 +65,30 @@ class SubtitleCatLink {
   final String label;
 }
 
+/// A subtitle entry parsed from the subdl.com search API response.
+class SubdlEntry {
+  const SubdlEntry({
+    required this.nId,
+    required this.language,
+    required this.label,
+    required this.releaseName,
+  });
+
+  /// The subtitle's `n_id` — the identifier the download endpoint
+  /// (`/api/v2/subtitles/{nId}/download`) addresses.
+  final String nId;
+
+  /// ISO-ish language code ('id', 'en', …) normalized from subdl's `lang`
+  /// field (which carries full names like 'indonesian').
+  final String language;
+
+  /// Human-readable language label (e.g. 'Indonesian').
+  final String label;
+
+  /// The release this subtitle matches (e.g. 'Movie.2021.1080p.WEB.x264').
+  final String releaseName;
+}
+
 /// ---------------------------------------------------------------------------
 /// External subtitle fetching for the native player.
 ///
@@ -93,6 +117,8 @@ class SubtitleDatasource {
     Dio? dio,
     this.yifyTimeout = const Duration(seconds: 15),
     this.subcatTimeout = const Duration(seconds: 25),
+    this.subdlTimeout = const Duration(seconds: 20),
+    this.subdlApiKey = '',
   })  : _tmdb = tmdb ?? ApiClient(),
         _dio = dio ?? _createDio();
 
@@ -109,6 +135,16 @@ class SubtitleDatasource {
   /// Per-source budget for the SubtitleCat chain (search + up to 8 release
   /// detail pages). Injectable for tests.
   final Duration subcatTimeout;
+
+  /// Budget for the subdl.com chain (search + download). Injectable for
+  /// tests.
+  final Duration subdlTimeout;
+
+  /// Optional subdl.com API key (free from subdl.com → account → API). When
+  /// empty the subdl chain is SKIPPED entirely — YIFY + SubtitleCat still
+  /// run in parallel, so a missing key never blocks or delays the keyless
+  /// sources.
+  final String subdlApiKey;
 
   static Dio _createDio() {
     return Dio(
@@ -142,8 +178,10 @@ class SubtitleDatasource {
           .timeout(yifyTimeout, onTimeout: () => null),
       _fetchSubcatBestEffort(tmdbId: tmdbId)
           .timeout(subcatTimeout, onTimeout: () => null),
+      _fetchSubdlBestEffort(tmdbId: tmdbId)
+          .timeout(subdlTimeout, onTimeout: () => null),
     ]);
-    final picked = _pickBest(results[0], results[1]);
+    final picked = _pickBest(results[0], results[1], results[2]);
     // ignore: avoid_print
     debugPrint(
         'FILMKU_SUBS_RESULT tmdbId=$tmdbId picked=${picked?.language ?? 'none'}');
@@ -178,8 +216,14 @@ class SubtitleDatasource {
         title: title,
         year: year,
       ).timeout(subcatTimeout, onTimeout: () => null),
+      _fetchSubdlBestEffort(
+        tmdbId: tmdbId,
+        imdbId: imdbId,
+        title: title,
+        year: year,
+      ).timeout(subdlTimeout, onTimeout: () => null),
     ]);
-    final picked = _pickBest(results[0], results[1]);
+    final picked = _pickBest(results[0], results[1], results[2]);
     // ignore: avoid_print
     debugPrint(
         'FILMKU_SUBS_RESULT title=$title year=$year picked=${picked?.language ?? 'none'}');
@@ -233,13 +277,142 @@ class SubtitleDatasource {
     }
   }
 
-  /// Picks the best subtitle of the two parallel results: Indonesian first
-  /// (either source), then English, then whatever exists. Null when neither
-  /// source produced anything.
-  static SubtitleInfo? _pickBest(SubtitleInfo? a, SubtitleInfo? b) {
+  /// subdl.com chain wrapped so ANY failure returns null instead of
+  /// cancelling the parallel YIFY/SubtitleCat searches. Skipped entirely when
+  /// no API key is configured (the common keyless case).
+  Future<SubtitleInfo?> _fetchSubdlBestEffort({
+    int? tmdbId,
+    String? imdbId,
+    String? title,
+    String? year,
+  }) async {
+    if (subdlApiKey.trim().isEmpty) return null;
+    try {
+      return await _fetchFromSubdl(
+        tmdbId: tmdbId,
+        imdbId: imdbId,
+        title: title,
+        year: year,
+      );
+    } catch (_) {
+      // subdl must never cancel YIFY/SubtitleCat — return null.
+      return null;
+    }
+  }
+
+  /// subdl.com flow (documented API, 2026-08): search `GET /api/v2/
+  /// subtitles/search` (Bearer auth) → pick the best release (Indonesian →
+  /// English → any) → download the exact file `GET /api/v2/subtitles/
+  /// {nId}/download?format=file`. Any failure returns null — subtitles must
+  /// never break playback.
+  Future<SubtitleInfo?> _fetchFromSubdl({
+    int? tmdbId,
+    String? imdbId,
+    String? title,
+    String? year,
+  }) async {
+    final key = subdlApiKey.trim();
+    if (key.isEmpty) return null;
+    final auth = {'Authorization': 'Bearer $key'};
+    // Prefer imdb_id; else tmdb_id (+type=movie — TMDB ids are only unique
+    // with their media type); else film_name + year.
+    final params = <String, String>{
+      if (imdbId != null && imdbId.isNotEmpty)
+        'imdb_id': imdbId
+      else if (tmdbId != null) ...{
+        'tmdb_id': '$tmdbId',
+        'type': 'movie'
+      } else ...{
+        if (title != null && title.trim().isNotEmpty) 'film_name': title.trim(),
+        if (year != null && year.isNotEmpty) 'year': year,
+      },
+    };
+    if (params.isEmpty) return null;
+    // Deliberately NO `languages` filter (2026-08 reviewer finding): subdl
+    // may code Indonesian as 'id' OR 'ind', and a filter could silently
+    // exclude the very subtitles we want. Fetch everything and let
+    // [_pickSubdlEntry] prefer Indonesian → English → any client-side.
+    final uri = Uri.https('api.subdl.com', '/api/v2/subtitles/search', params);
+    debugPrint('FILMKU_SUBS_SUBDL_SEARCH uri=$uri');
+    final searchJson = await _getText(uri.toString(), headers: auth);
+    final entries = parseSubdlSearchResponse(searchJson);
+    debugPrint('FILMKU_SUBS_SUBDL_SEARCH entries=${entries.length} status?');
+    final pick = _pickSubdlEntry(entries);
+    if (pick == null) return null;
+    final downloadUri = Uri.https(
+      'api.subdl.com',
+      '/api/v2/subtitles/${Uri.encodeComponent(pick.nId)}/download',
+      {'format': 'file'},
+    );
+    debugPrint('FILMKU_SUBS_SUBDL_DL nId=${pick.nId} lang=${pick.language}');
+    final bytes = await _getBytes(downloadUri.toString(), headers: auth);
+    // format=file should be a plain .srt/.vtt — but stay defensive: some
+    // releases only exist as an archive, and the API may return zip bytes
+    // ('PK' magic).
+    String? text;
+    if (bytes.length >= 4 && bytes[0] == 0x50 && bytes[1] == 0x4B) {
+      text = extractSrtFromZip(bytes);
+    } else {
+      var decoded = utf8.decode(bytes, allowMalformed: true);
+      if (decoded.startsWith('\uFEFF')) decoded = decoded.substring(1);
+      text = decoded;
+    }
+    if (text == null || text.trim().isEmpty) return null;
+    // Defensive: a 200 HTML page (error/redirect shell) is NOT a subtitle.
+    final head =
+        text.trimLeft().substring(0, math.min(text.trimLeft().length, 64));
+    final lowerHead = head.toLowerCase();
+    if (lowerHead.startsWith('<!doctype') || lowerHead.startsWith('<html')) {
+      return null;
+    }
+    debugPrint(
+        'FILMKU_SUBS_SUBDL ok lang=${pick.language} bytes=${bytes.length}');
+    return SubtitleInfo(
+      title: pick.label,
+      language: pick.language,
+      data: text,
+    );
+  }
+
+  /// Picks the best of the parsed subdl entries: Indonesian → English → any.
+  static SubdlEntry? _pickSubdlEntry(List<SubdlEntry> entries) {
+    if (entries.isEmpty) return null;
+    for (final language in const <String>['id', 'en']) {
+      for (final entry in entries) {
+        if (entry.language == language) return entry;
+      }
+    }
+    return entries.first;
+  }
+
+  /// Normalizes subdl's `lang` field — full names ('indonesian', 'english',
+  /// 'spanish', …) or codes — to the app's ISO-ish codes ('id' / 'en' / …).
+  static String _normalizeSubdlLang(String raw) {
+    final s = raw.trim().toLowerCase();
+    if (s == 'id' || s == 'ind' || s == 'in' || s.contains('indonesian')) {
+      return 'id';
+    }
+    if (s == 'en' || s == 'eng' || s.contains('english')) return 'en';
+    // subdl also carries full language names — map them through the same
+    // token table used for YIFY slugs ('spanish' → 'es', 'french' → 'fr', …).
+    for (final entry in _languageTokens.entries) {
+      if (s == entry.key || s.contains(entry.key)) return entry.value;
+    }
+    return s;
+  }
+
+  /// Picks the best subtitle of the three parallel results: Indonesian first
+  /// (any source), then English, then whatever exists. Null when no source
+  /// produced anything.
+  static SubtitleInfo? _pickBest(
+    SubtitleInfo? a,
+    SubtitleInfo? b,
+    SubtitleInfo? c,
+  ) {
     final candidates = <SubtitleInfo>[
       if (a != null) a,
       if (b != null) b,
+      if (c != null) c,
     ];
     if (candidates.isEmpty) return null;
     for (final language in const <String>['id', 'en']) {
@@ -446,8 +619,11 @@ class SubtitleDatasource {
     }
   }
 
-  Future<String> _getText(String url) async {
-    final r = await _dio.get<List<int>>(url);
+  Future<String> _getText(String url, {Map<String, String>? headers}) async {
+    final r = await _dio.get<List<int>>(
+      url,
+      options: Options(headers: headers),
+    );
     return utf8.decode(r.data ?? const <int>[], allowMalformed: true);
   }
 
@@ -615,6 +791,48 @@ class SubtitleDatasource {
       if (seen.add(slug)) slugs.add(slug);
     }
     return slugs;
+  }
+
+  /// Parses the subdl.com search API response (`GET /api/v2/subtitles/
+  /// search`) into subtitle entries. Defensive: entries without a usable
+  /// `n_id` (the download endpoint needs it) are ignored, optional fields
+  /// are tolerated, and the `lang` field is normalized (full names → ISO-ish
+  /// codes).
+  @visibleForTesting
+  static List<SubdlEntry> parseSubdlSearchResponse(String json) {
+    final entries = <SubdlEntry>[];
+    final Map<String, dynamic> decoded;
+    try {
+      final value = jsonDecode(json);
+      if (value is! Map<String, dynamic>) return entries;
+      decoded = value;
+    } catch (_) {
+      return entries;
+    }
+    final subtitles = decoded['subtitles'];
+    if (subtitles is! List) return entries;
+    for (final item in subtitles) {
+      if (item is! Map<String, dynamic>) continue;
+      final nId = item['n_id'] ?? item['id'] ?? item['subtitle_id'];
+      if (nId is! String || nId.isEmpty) continue;
+      final rawLang = item['lang'];
+      final lang = rawLang is String ? _normalizeSubdlLang(rawLang) : 'xx';
+      final releaseName = item['release_name'];
+      entries.add(SubdlEntry(
+        nId: nId,
+        language: lang,
+        label: _subdlLanguageLabel(lang),
+        releaseName: releaseName is String ? releaseName : '',
+      ));
+    }
+    return entries;
+  }
+
+  /// Human-readable label for a normalized subdl language code.
+  static String _subdlLanguageLabel(String code) {
+    if (code == 'id') return 'Indonesian';
+    if (code == 'en') return 'English';
+    return _scLanguageNames[code] ?? (code.isEmpty ? 'Subtitle' : code);
   }
 
   /// Extracts the direct `.srt` links from a SubtitleCat detail page, with

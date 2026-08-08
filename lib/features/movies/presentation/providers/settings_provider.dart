@@ -9,21 +9,28 @@ final settingsServiceProvider = Provider<SettingsService>(
 class SettingsState {
   const SettingsState({
     required this.apiKey,
+    required this.subdlApiKey,
     required this.headlessExtraction,
     required this.fallbackWebview,
   });
 
   final String apiKey;
+
+  /// Optional subdl.com subtitle API key (free; empty = subdl subtitle
+  /// source skipped).
+  final String subdlApiKey;
   final bool headlessExtraction;
   final bool fallbackWebview;
 
   SettingsState copyWith({
     String? apiKey,
+    String? subdlApiKey,
     bool? headlessExtraction,
     bool? fallbackWebview,
   }) =>
       SettingsState(
         apiKey: apiKey ?? this.apiKey,
+        subdlApiKey: subdlApiKey ?? this.subdlApiKey,
         headlessExtraction: headlessExtraction ?? this.headlessExtraction,
         fallbackWebview: fallbackWebview ?? this.fallbackWebview,
       );
@@ -34,6 +41,7 @@ class SettingsNotifier extends StateNotifier<SettingsState> {
   SettingsNotifier(this._service)
       : super(SettingsState(
           apiKey: _service.apiKey,
+          subdlApiKey: _service.subdlApiKey,
           headlessExtraction: _service.headlessExtraction,
           fallbackWebview: _service.fallbackWebview,
         ));
@@ -43,6 +51,11 @@ class SettingsNotifier extends StateNotifier<SettingsState> {
   void setApiKey(String value) {
     _service.setApiKey(value);
     state = state.copyWith(apiKey: value);
+  }
+
+  void setSubdlApiKey(String value) {
+    _service.setSubdlApiKey(value);
+    state = state.copyWith(subdlApiKey: value);
   }
 
   void setHeadlessExtraction(bool value) {
