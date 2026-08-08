@@ -405,6 +405,21 @@ flutter doctor   # Android toolchain should be green
 
 ## 📝 Changelog
 
+### `2026-08-08` — v1.3.43: subtitles finally ATTACH — the media_kit temp-file bug
+
+- **On-device root cause (Android logcat, 2026-08):** the external-subtitle
+  fetch ALWAYS succeeded (`FILMKU_SUBS loaded id … chars`) yet subtitles
+  never appeared on ANY platform. `SubtitleTrack.data()` makes media_kit
+  write the text to a temp file named `{uuid}` with NO extension
+  (`TempFile.create()`), and libmpv detects the subtitle format from the
+  file EXTENSION — so `sub-add file:///…/{uuid}.` failed with
+  `Can not open external file` and the subtitle silently never rendered.
+- **Fix:** the player now writes the fetched SRT to a temp file WITH a
+  `.srt` extension (`filmku_sub_{tmdbId}.srt` in the app temp dir) and
+  attaches it via `SubtitleTrack.uri` — libmpv detects SRT and renders it.
+  New log `FILMKU_SUBS_ATTACHED` proves the attach on-device. Same fix
+  covers iOS (identical media_kit path).
+
 ### `2026-08-08` — v1.3.42: third subtitle source (subdl.com, optional free key)
 
 - **Subdl joins YIFY + SubtitleCat as a THIRD external subtitle source** —
@@ -577,8 +592,9 @@ Semua tab sekarang konsisten mengambang bebas.
 <!-- VERSION-TOC:start -->
 
 <details>
-<summary>📜 Riwayat versi (57)</summary>
+<summary>📜 Riwayat versi (58)</summary>
 
+- [`v1.3.43`](#2026-08-08--v1343-subtitles-finally-attach--the-media_kit-temp-file-bug)
 - [`v1.3.42`](#2026-08-08--v1342-third-subtitle-source-subdlcom-optional-free-key)
 - [`v1.3.41`](#2026-08-08--v1341-remove-button-polish-bigger-tap-target--honest-retry)
 - [`v1.3.40`](#2026-08-08--v1340-remove-movies-from-lanjutkan-menonton--subtitles-search-harder)
