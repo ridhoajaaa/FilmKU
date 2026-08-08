@@ -405,6 +405,24 @@ flutter doctor   # Android toolchain should be green
 
 ## 📝 Changelog
 
+### `2026-08-08` — v1.3.44: subtitles served over the local relay — mpv finally renders them
+
+- **Root cause chain (on-device Android logcat, v1.3.42 → v1.3.43):** the
+  subtitle FETCH always succeeded (`FILMKU_SUBS_RESULT picked=id`, file
+  written, `exists=true`) but libmpv refused every local file: extension-less
+  uuid temp file → `Can not open external file`, then `.srt`-named file →
+  still rejected, then plain filesystem path → still rejected. Desktop mpv
+  accepts all three, but the **Android media_kit mpv build only opens
+  subtitle URLs over HTTP** (media-kit issue #394: `SubtitleTrack.uri` with
+  an `http(s)://` URL works; `file://`/plain paths fail).
+- **Fix:** the player now serves the fetched SRT **in-memory from the local
+  loopback relay** (`lib/core/net/hls_relay.dart` gained a `/subtitle` route)
+  and attaches `SubtitleTrack.uri('http://127.0.0.1:{port}/subtitle?n={tmdbId}')`
+  — the exact same transport the video itself already uses (so no new
+  permissions, no file system access, works on iOS too).
+- Subtitle buttons, retry, and the `FILMKU_SUBS_*` logs unchanged; fetching
+  order (YIFY → SubtitleCat → subdl) and parallel probing untouched.
+
 ### `2026-08-08` — v1.3.43: subtitles finally ATTACH — the media_kit temp-file bug
 
 - **On-device root cause (Android logcat, 2026-08):** the external-subtitle
@@ -592,8 +610,9 @@ Semua tab sekarang konsisten mengambang bebas.
 <!-- VERSION-TOC:start -->
 
 <details>
-<summary>📜 Riwayat versi (58)</summary>
+<summary>📜 Riwayat versi (59)</summary>
 
+- [`v1.3.44`](#2026-08-08--v1344-subtitles-served-over-the-local-relay--mpv-finally-renders-them)
 - [`v1.3.43`](#2026-08-08--v1343-subtitles-finally-attach--the-media_kit-temp-file-bug)
 - [`v1.3.42`](#2026-08-08--v1342-third-subtitle-source-subdlcom-optional-free-key)
 - [`v1.3.41`](#2026-08-08--v1341-remove-button-polish-bigger-tap-target--honest-retry)

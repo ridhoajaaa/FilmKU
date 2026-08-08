@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
@@ -8,7 +7,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:screen_brightness/screen_brightness.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
@@ -17,6 +15,7 @@ import '../../../../core/local/settings_service.dart';
 import '../../../../core/local/watch_history_service.dart';
 import '../../../../core/local/watch_progress_service.dart';
 import '../../../../core/media/mini_player_service.dart';
+import '../../../../core/net/hls_relay.dart';
 import '../../../../core/platform/orientation_changer.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/utils/app_logger.dart';
@@ -431,36 +430,35 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
 
   /// Attaches a fetched external subtitle to the player.
   ///
-  /// CRITICAL (2026-08 on-device root cause, Android logcat): the fetch
-  /// ALWAYS succeeded (`FILMKU_SUBS loaded …`) yet subtitles never appeared
-  /// on ANY platform — `SubtitleTrack.data()` makes media_kit write the text
-  /// to a temp file named `{uuid}` with NO extension (`TempFile.create`),
-  /// and libmpv detects the subtitle format from the file EXTENSION, so
-  /// `sub-add file:///…/{uuid}.` failed with "Can not open external file".
-  /// We write the SRT to a temp file WITH an `.srt` extension ourselves and
-  /// attach it via [SubtitleTrack.uri] — mpv then loads it cleanly.
+  /// CRITICAL (2026-08, THREE consecutive on-device Android logcats): the
+  /// fetch ALWAYS succeeded (`FILMKU_SUBS loaded …`) yet subtitles never
+  /// rendered — mpv's `sub-add` on the media-kit Android build rejects
+  /// `file://` URIs AND plain filesystem paths ("Can not open external
+  /// file", with and without an `.srt` extension). The ONLY form proven to
+  /// work is an HTTP URL: media-kit issue #394 (Android) + this app's own
+  /// relay already streams the video to the same mpv over HTTP
+  /// (`http://127.0.0.1:{port}/master.m3u8?src=…`). So the SRT is served
+  /// from the in-memory loopback relay and attached as an HTTP URL — the
+  /// same fix covers iOS (identical media-kit path).
   Future<void> _attachExternalSubtitle(
     SubtitleInfo sub, {
     required int tmdbId,
   }) async {
-    File? subFile;
     try {
-      final dir = await getTemporaryDirectory();
-      // Forward slash works on Android + iOS; the .srt extension is what
-      // libmpv needs to detect the format.
-      subFile = File('${dir.path}/filmku_sub_$tmdbId.srt');
-      await subFile.writeAsString(sub.data, flush: true);
+      final port = await HlsRelay.instance.ensureRunning();
+      if (port == null) {
+        appLog('FILMKU_SUBS', 'relay unavailable tmdbId=$tmdbId');
+        _notifySubsResult(false);
+        return;
+      }
+      HlsRelay.instance.serveSubtitle(tmdbId, sub.data);
+      final subUrl = 'http://127.0.0.1:$port/filmku-sub.srt?tmdbId=$tmdbId';
       await _player.setSubtitleTrack(
-        SubtitleTrack.uri(
-          subFile.uri.toString(),
-          title: sub.title,
-          language: sub.language,
-        ),
+        SubtitleTrack.uri(subUrl, title: sub.title, language: sub.language),
       );
       appLog(
         'FILMKU_SUBS_ATTACHED',
-        '${sub.language} ${sub.data.length} chars -> '
-            '${subFile.uri.toString()} tmdbId=$tmdbId',
+        '${sub.language} ${sub.data.length} chars -> $subUrl tmdbId=$tmdbId',
       );
     } catch (error) {
       appLog('FILMKU_SUBS', 'attach failed tmdbId=$tmdbId $error');

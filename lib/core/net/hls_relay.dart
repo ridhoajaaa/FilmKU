@@ -82,6 +82,36 @@ class HlsRelay {
   /// from a stale one (disposed relay or another session's port → re-serve).
   int? get port => _server?.port;
 
+  /// One-shot external-subtitle slots served on demand (`/filmku-sub.srt`).
+  ///
+  /// 2026-08 on-device root cause: the ONLY subtitle-attach form that works
+  /// with the Android media-kit mpv build is an HTTP URL — `sub-add` rejects
+  /// `file://` URIs AND plain filesystem paths with "Can not open external
+  /// file" (three consecutive Android logcats: fetched OK, attach failed
+  /// every time). HTTP URLs load fine (media-kit issue #394 + this relay
+  /// already streams the video over HTTP to the same mpv instance), so the
+  /// player serves the fetched SRT from this in-memory slot instead of a
+  /// file.
+  final Map<int, String> _subtitleSlots = {};
+
+  /// Binds the loopback server if needed and returns the port — lets the
+  /// player serve external subtitles over HTTP even for streams that do NOT
+  /// need the PNG-stripping relay (direct m3u8 etc.). Idempotent.
+  Future<int?> ensureRunning() async {
+    await _ensureBound();
+    return _server?.port;
+  }
+
+  /// Registers [content] (raw SRT/WebVTT text) under [tmdbId] so that
+  /// `GET /filmku-sub.srt?tmdbId={tmdbId}` serves it to the player.
+  void serveSubtitle(int tmdbId, String content) {
+    _subtitleSlots[tmdbId] = content;
+  }
+
+  void clearSubtitle(int tmdbId) {
+    _subtitleSlots.remove(tmdbId);
+  }
+
   /// Starts the relay (idempotent) and returns the rewritten master-playlist
   /// URL for [masterUrl], or null if the master cannot be fetched.
   Future<String?> serve(String masterUrl) async {
@@ -137,6 +167,10 @@ class HlsRelay {
   void _listen() {
     _server!.listen((request) async {
       try {
+        if (request.uri.path == '/filmku-sub.srt') {
+          await _serveSubtitle(request);
+          return;
+        }
         final src = request.uri.queryParameters['src'];
         if (src == null || src.isEmpty) {
           request.response.statusCode = HttpStatus.badRequest;
@@ -155,6 +189,24 @@ class HlsRelay {
         } catch (_) {}
       }
     });
+  }
+
+  /// Serves a registered external subtitle (`/filmku-sub.srt?tmdbId={id}`)
+  /// as plain text. The `.srt` extension in the URL is the strong format
+  /// hint mpv's demuxer needs when loading a remote subtitle.
+  Future<void> _serveSubtitle(HttpRequest request) async {
+    final id = int.tryParse(request.uri.queryParameters['tmdbId'] ?? '');
+    final content = id != null ? _subtitleSlots[id] : null;
+    if (content == null) {
+      request.response.statusCode = HttpStatus.notFound;
+      await request.response.close();
+      return;
+    }
+    request.response.headers.contentType =
+        ContentType('text', 'plain', charset: 'utf-8');
+    request.response.headers.set('Access-Control-Allow-Origin', '*');
+    request.response.add(utf8.encode(content));
+    await request.response.close();
   }
 
   Future<void> _servePlaylist(HttpRequest request, String src) async {
