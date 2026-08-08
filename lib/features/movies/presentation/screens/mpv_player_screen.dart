@@ -422,24 +422,34 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
   /// meaningful title/language. 2vcdn streams report `subtitle=2` PHANTOM
   /// tracks (their `#EXT-X-MEDIA` lists carry no subtitle variants at all),
   /// so mpv enumerates empty tracks with no title; those must not block the
-  /// external-subtitle fetch (the only real subtitle source).
+  /// external-subtitle fetch (the only real subtitle source). The relay's
+  /// injected 'FilmKU Indonesia' HLS track is OUR placeholder (its content
+  /// arrives later via the relay) — it must NOT count as a real native track
+  /// either, or the external fetch would early-return and the track would
+  /// stay empty forever.
   bool _hasRealSubtitleTracks(List<SubtitleTrack> tracks) => tracks.any((t) {
         final title = t.title?.trim() ?? '';
-        return title.isNotEmpty && title != 'Undetermined';
+        return title.isNotEmpty &&
+            title != 'Undetermined' &&
+            !title.startsWith('FilmKU');
       });
 
   /// Attaches a fetched external subtitle to the player.
   ///
-  /// CRITICAL (2026-08, THREE consecutive on-device Android logcats): the
-  /// fetch ALWAYS succeeded (`FILMKU_SUBS loaded …`) yet subtitles never
-  /// rendered — mpv's `sub-add` on the media-kit Android build rejects
-  /// `file://` URIs AND plain filesystem paths ("Can not open external
-  /// file", with and without an `.srt` extension). The ONLY form proven to
-  /// work is an HTTP URL: media-kit issue #394 (Android) + this app's own
-  /// relay already streams the video to the same mpv over HTTP
-  /// (`http://127.0.0.1:{port}/master.m3u8?src=…`). So the SRT is served
-  /// from the in-memory loopback relay and attached as an HTTP URL — the
-  /// same fix covers iOS (identical media-kit path).
+  /// CRITICAL (2026-08, THREE consecutive on-device Android logcats + adb
+  /// relay verification): the fetch ALWAYS succeeded (`picked=id`, relay
+  /// served the SRT with HTTP 200) yet subtitles never rendered — mpv's
+  /// `sub-add` on the media-kit ANDROID build rejects EVERY external form:
+  /// `file://` URIs, plain filesystem paths, `.srt`-named files, and even
+  /// `http://` URLs ("Can not open external file …", verified 2026-08).
+  /// BUT the same build enumerates HLS `#EXT-X-MEDIA` subtitle tracks
+  /// natively (`FILMKU_MPV_TRACKS subtitle=2`) and selects them via the
+  /// `sid` property — no `sub-add` involved. So for RELAY streams the SRT is
+  /// registered on the relay, which injects an HLS WebVTT track into the
+  /// master playlist; selecting that enumerated track makes mpv fetch
+  /// `/filmku-sub.vtt?tmdbId=` and render it (libass=true already set in
+  /// MiniPlayerService). Non-relay streams keep the old HTTP `sub-add` path
+  /// as best-effort.
   Future<void> _attachExternalSubtitle(
     SubtitleInfo sub, {
     required int tmdbId,
@@ -452,6 +462,38 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
         return;
       }
       HlsRelay.instance.serveSubtitle(tmdbId, sub.data);
+      final isRelayStream = widget.args.url.startsWith('http://127.0.0.1:');
+      if (isRelayStream) {
+        // The injected HLS track was enumerated at open (title
+        // 'FilmKU Indonesia'). Wait briefly for it if the tracks event
+        // hasn't arrived yet, then select it via the native sid path.
+        SubtitleTrack? injected;
+        final deadline = DateTime.now().add(const Duration(seconds: 3));
+        while (injected == null && DateTime.now().isBefore(deadline)) {
+          final matches = _player.state.tracks.subtitle
+              .where((t) => (t.title?.trim() ?? '').startsWith('FilmKU'))
+              .toList();
+          if (matches.isNotEmpty) {
+            injected = matches.first;
+          } else {
+            await Future<void>.delayed(const Duration(milliseconds: 200));
+          }
+        }
+        if (injected == null) {
+          appLog('FILMKU_SUBS',
+              'injected HLS track not enumerated tmdbId=$tmdbId');
+          _notifySubsResult(false);
+          return;
+        }
+        await _player.setSubtitleTrack(injected);
+        appLog(
+          'FILMKU_SUBS_ATTACHED',
+          '${sub.language} ${sub.data.length} chars via HLS sid='
+              '${injected.id} tmdbId=$tmdbId',
+        );
+        return;
+      }
+      // Non-relay stream (direct m3u8/mp4): best-effort HTTP sub-add.
       final subUrl = 'http://127.0.0.1:$port/filmku-sub.srt?tmdbId=$tmdbId';
       await _player.setSubtitleTrack(
         SubtitleTrack.uri(subUrl, title: sub.title, language: sub.language),
@@ -464,6 +506,18 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
       appLog('FILMKU_SUBS', 'attach failed tmdbId=$tmdbId $error');
       _notifySubsResult(false);
     }
+  }
+
+  /// Appends `&tmdbId=` to a RELAY stream URL so the relay injects the HLS
+  /// subtitle track into the master playlist. Non-relay URLs pass through
+  /// unchanged (no playlist rewriting happens there).
+  String _urlWithSubtitleTmdb() {
+    final url = widget.args.url;
+    final tmdbId = widget.args.tmdbId;
+    if (tmdbId == null || !url.startsWith('http://127.0.0.1:')) return url;
+    if (url.contains('tmdbId=')) return url;
+    final sep = url.contains('?') ? '&' : '?';
+    return '$url${sep}tmdbId=$tmdbId';
   }
 
   /// Surfaces the external-subtitle outcome ONCE per session as an overlay
@@ -500,9 +554,16 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
       // async load for a network stream — the autoplay may buffer from 0 and
       // the seek gets dropped, which read as "Lanjutkan menonton starts from
       // the beginning" (2026-08). Paused-open → seek → play is deterministic.
+      //
+      // Relay streams also get the tmdbId appended to the master URL so the
+      // relay injects an HLS EXT-X-MEDIA subtitle track into the playlist
+      // (the ONLY subtitle form the Android libmpv build loads — sub-add
+      // rejects every external form, 2026-08). The track is DEFAULT=NO so
+      // mpv lists it without fetching; the player selects it explicitly once
+      // the external SRT is registered (~2s later).
       await _player.open(
         Media(
-          widget.args.url,
+          _urlWithSubtitleTmdb(),
           httpHeaders: widget.args.httpHeaders,
         ),
         play: false,
@@ -732,16 +793,26 @@ class _MpvPlayerScreenState extends State<MpvPlayerScreen> {
             'subtitle=${t.subtitle.length} '
             'subTitles=${t.subtitle.map((s) => s.title ?? '?').join('|')}',
       );
-      // Auto-select the first subtitle track so subtitles show by DEFAULT
-      // when the stream carries them (libmpv only auto-enables DEFAULT/
-      // forced tracks; HLS subtitle variants are usually DEFAULT=NO). One-
-      // shot per open — the user's toggle/settings take over afterwards.
-      if (t.subtitle.isNotEmpty && !_subtitleAutoSelected) {
+      // Auto-select the first REAL subtitle track so subtitles show by
+      // DEFAULT when the stream carries them (libmpv only auto-enables
+      // DEFAULT/forced tracks; HLS subtitle variants are usually DEFAULT=NO).
+      // One-shot per open — the user's toggle/settings take over afterwards.
+      // The relay-injected 'FilmKU Indonesia' placeholder is SKIPPED here:
+      // its content is registered asynchronously (~2s later) and the player
+      // selects it explicitly then — auto-selecting it now would make mpv
+      // fetch an EMPTY WebVTT and cache it (a refresh never comes).
+      final real = t.subtitle
+          .where((s) =>
+              !(s.title?.trim().startsWith('FilmKU') ?? false) &&
+              (s.title?.trim().isNotEmpty ?? false) &&
+              s.title != 'Undetermined')
+          .toList();
+      if (real.isNotEmpty && !_subtitleAutoSelected) {
         _subtitleAutoSelected = true;
-        _player.setSubtitleTrack(t.subtitle.first);
+        _player.setSubtitleTrack(real.first);
         appLog(
           'FILMKU_MPV_SUBTRACK',
-          'autoSelected=${t.subtitle.first.title ?? '(no title)'}',
+          'autoSelected=${real.first.title ?? '(no title)'}',
         );
       }
     });

@@ -405,6 +405,33 @@ flutter doctor   # Android toolchain should be green
 
 ## 📝 Changelog
 
+### `2026-08-08` — v1.3.45: subtitles injected as HLS tracks — the Android-proof attach
+
+- **Why the HTTP relay was not enough (2026-08, on-device Android + adb
+  verification):** the relay served the fetched SRT correctly (HTTP 200, real
+  Indonesian content, verified through `adb forward` + curl from the laptop)
+  yet mpv STILL said `Can not open external file` for the `http://` URL.
+  Media_kit's ANDROID libmpv build is a reduced build (~1/3 of full mpv,
+  media-kit issue #563): its `sub-add` rejects EVERY external form — file,
+  plain path, `.srt` file, and even loopback HTTP. Desktop mpv accepts all of
+  them; Android does not.
+- **Fix — the ONE path Android mpv demonstrably supports:** the SAME build
+  enumerates HLS `#EXT-X-MEDIA` subtitle tracks natively (`FILMKU_MPV_TRACKS
+  subtitle=2` was already true) and selects them via the `sid` property — NO
+  `sub-add` involved. The relay now INJECTS a WebVTT subtitle track into the
+  master playlist (`#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="filmku"…`, linked
+  from every variant with `SUBTITLES="filmku"`), the player appends its
+  `tmdbId` to the master URL to trigger the injection, and once the external
+  SRT is registered (~2s in) the player selects the enumerated track — mpv
+  fetches `/filmku-sub.vtt?tmdbId=` (SRT→WebVTT conversion in the relay,
+  BOM/CRLF/comma-timestamps handled) and libass renders it (`libass: true` +
+  bundled Roboto font were already configured).
+- `#EXTM3U` stays the first playlist line (HLS spec) — the media line is
+  inserted right after it. `clearSubtitle` also resets the injection state so
+  a subtitle-less movie never inherits a stale dead track.
+- 4 new relay tests (SRT→WebVTT, injection with/without tmdbId, VTT route
+  content-type). 265/265 pass.
+
 ### `2026-08-08` — v1.3.44: subtitles served over the local relay — mpv finally renders them
 
 - **Root cause chain (on-device Android logcat, v1.3.42 → v1.3.43):** the
@@ -610,8 +637,9 @@ Semua tab sekarang konsisten mengambang bebas.
 <!-- VERSION-TOC:start -->
 
 <details>
-<summary>📜 Riwayat versi (59)</summary>
+<summary>📜 Riwayat versi (60)</summary>
 
+- [`v1.3.45`](#2026-08-08--v1345-subtitles-injected-as-hls-tracks--the-android-proof-attach)
 - [`v1.3.44`](#2026-08-08--v1344-subtitles-served-over-the-local-relay--mpv-finally-renders-them)
 - [`v1.3.43`](#2026-08-08--v1343-subtitles-finally-attach--the-media_kit-temp-file-bug)
 - [`v1.3.42`](#2026-08-08--v1342-third-subtitle-source-subdlcom-optional-free-key)

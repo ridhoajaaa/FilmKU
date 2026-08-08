@@ -125,4 +125,139 @@ void main() {
       await cdn.close(force: true);
     }
   });
+
+  test('srtToVtt converts SRT timestamps, BOM and CRLF to WebVTT', () {
+    const srt = '\uFEFF1\r\n'
+        '00:00:01,000 --> 00:00:02,500\r\n'
+        'Hello world\r\n'
+        '\r\n'
+        '2\r\n'
+        '00:00:03,000 --> 00:00:04,000\r\n'
+        'Second cue\r\n';
+    final vtt = HlsRelay.srtToVtt(srt);
+    expect(vtt, startsWith('WEBVTT'));
+    expect(vtt, isNot(contains('\uFEFF')));
+    expect(vtt, isNot(contains('\r')));
+    expect(vtt, contains('00:00:01.000 --> 00:00:02.500'));
+    expect(vtt, contains('00:00:03.000 --> 00:00:04.000'));
+    expect(vtt, contains('Hello world'));
+    expect(vtt, contains('Second cue'));
+  });
+
+  test(
+      'master playlist gets an injected HLS subtitle track when tmdbId is present in the request query',
+      () async {
+    final cdn = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final base = 'http://127.0.0.1:${cdn.port}';
+    cdn.listen((request) async {
+      request.response.headers.contentType =
+          ContentType('application', 'vnd.apple.mpegurl');
+      request.response.write('#EXTM3U\n'
+          '#EXT-X-STREAM-INF:BANDWIDTH=1000,RESOLUTION=1920x1080\n'
+          'variant.m3u8\n');
+      await request.response.close();
+    });
+    try {
+      final relayUrl = await HlsRelay.instance.serve('$base/master.m3u8');
+      expect(relayUrl, isNotNull);
+      // The player appends tmdbId to the relay URL (the injection trigger).
+      final uri = Uri.parse(relayUrl!).replace(queryParameters: {
+        ...Uri.parse(relayUrl).queryParameters,
+        'tmdbId': '1339713'
+      });
+      final client = HttpClient();
+      try {
+        final masterText = await client
+            .getUrl(uri)
+            .then((r) => r.close())
+            .then(utf8.decodeStream);
+        expect(masterText, contains('#EXT-X-MEDIA:TYPE=SUBTITLES'));
+        expect(masterText, contains('GROUP-ID="filmku"'));
+        expect(masterText, contains('filmku-sub.vtt?tmdbId=1339713'));
+        expect(masterText, contains('SUBTITLES="filmku"'));
+        // The injected track must be DEFAULT=NO so mpv lists it without
+        // fetching the (not-yet-registered) WebVTT at open.
+        expect(masterText, contains('DEFAULT=NO'));
+        // HLS spec: #EXTM3U MUST remain the very first line — a tag before
+        // it makes ffmpeg's hls demuxer reject the whole playlist (video
+        // included). The media line is inserted AFTER the header.
+        expect(masterText.startsWith('#EXTM3U\n'), isTrue,
+            reason: '#EXTM3U must stay the first line');
+        final header = masterText.split('\n');
+        expect(header[1], contains('#EXT-X-MEDIA:TYPE=SUBTITLES'));
+      } finally {
+        client.close(force: true);
+      }
+    } finally {
+      await HlsRelay.instance.dispose();
+      await cdn.close(force: true);
+    }
+  });
+
+  test('master playlist has NO injected subtitle track without tmdbId',
+      () async {
+    final cdn = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final base = 'http://127.0.0.1:${cdn.port}';
+    cdn.listen((request) async {
+      request.response.headers.contentType =
+          ContentType('application', 'vnd.apple.mpegurl');
+      request.response.write('#EXTM3U\n'
+          '#EXT-X-STREAM-INF:BANDWIDTH=1000\n'
+          'variant.m3u8\n');
+      await request.response.close();
+    });
+    try {
+      final relayUrl = await HlsRelay.instance.serve('$base/master.m3u8');
+      expect(relayUrl, isNotNull);
+      final client = HttpClient();
+      try {
+        final masterText = await client
+            .getUrl(Uri.parse(relayUrl!))
+            .then((r) => r.close())
+            .then(utf8.decodeStream);
+        expect(masterText, isNot(contains('#EXT-X-MEDIA:TYPE=SUBTITLES')));
+      } finally {
+        client.close(force: true);
+      }
+    } finally {
+      await HlsRelay.instance.dispose();
+      await cdn.close(force: true);
+    }
+  });
+
+  test('served subtitle slot is reachable as WebVTT via filmku-sub.vtt',
+      () async {
+    const srt = '1\n00:00:01,000 --> 00:00:02,000\nSubtitle here\n';
+    HlsRelay.instance.serveSubtitle(1339713, srt);
+    final cdn = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final base = 'http://127.0.0.1:${cdn.port}';
+    cdn.listen((request) async {
+      request.response.write('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1000\n'
+          'variant.m3u8\n');
+      await request.response.close();
+    });
+    try {
+      final relayUrl = await HlsRelay.instance.serve('$base/master.m3u8');
+      expect(relayUrl, isNotNull);
+      final client = HttpClient();
+      try {
+        final port = Uri.parse(relayUrl!).port;
+        final resp = await client
+            .getUrl(Uri.parse(
+                'http://127.0.0.1:$port/filmku-sub.vtt?tmdbId=1339713'))
+            .then((r) => r.close());
+        expect(resp.statusCode, HttpStatus.ok);
+        expect(resp.headers.contentType?.mimeType, 'text/vtt');
+        final body = await utf8.decodeStream(resp);
+        expect(body, startsWith('WEBVTT'));
+        expect(body, contains('00:00:01.000 --> 00:00:02.000'));
+        expect(body, contains('Subtitle here'));
+      } finally {
+        client.close(force: true);
+      }
+    } finally {
+      await HlsRelay.instance.dispose();
+      await cdn.close(force: true);
+    }
+  });
 }

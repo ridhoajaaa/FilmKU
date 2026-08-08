@@ -94,6 +94,10 @@ class HlsRelay {
   /// file.
   final Map<int, String> _subtitleSlots = {};
 
+  /// tmdbId whose subtitle slot should be injected as an HLS track into
+  /// master-playlist responses (set by [serveSubtitle]). Null = no track.
+  int? _subtitleTmdbId;
+
   /// Binds the loopback server if needed and returns the port — lets the
   /// player serve external subtitles over HTTP even for streams that do NOT
   /// need the PNG-stripping relay (direct m3u8 etc.). Idempotent.
@@ -103,13 +107,23 @@ class HlsRelay {
   }
 
   /// Registers [content] (raw SRT/WebVTT text) under [tmdbId] so that
-  /// `GET /filmku-sub.srt?tmdbId={tmdbId}` serves it to the player.
+  /// `GET /filmku-sub.srt?tmdbId={tmdbId}` serves it to the player, and
+  /// makes master-playlist responses inject an HLS `#EXT-X-MEDIA` subtitle
+  /// track pointing at the WebVTT form (`/filmku-sub.vtt`).
   void serveSubtitle(int tmdbId, String content) {
     _subtitleSlots[tmdbId] = content;
+    _subtitleTmdbId = tmdbId;
   }
 
   void clearSubtitle(int tmdbId) {
     _subtitleSlots.remove(tmdbId);
+    // A cleared slot must also stop injecting its (now stale) HLS track into
+    // future master playlists — otherwise the NEXT movie that has NO subtitle
+    // would still get a dead 'FilmKU Indonesia' track pointing at an empty
+    // slot (reviewer finding 2026-08).
+    if (_subtitleTmdbId == tmdbId) {
+      _subtitleTmdbId = null;
+    }
   }
 
   /// Starts the relay (idempotent) and returns the rewritten master-playlist
@@ -171,6 +185,10 @@ class HlsRelay {
           await _serveSubtitle(request);
           return;
         }
+        if (request.uri.path == '/filmku-sub.vtt') {
+          await _serveSubtitleVtt(request);
+          return;
+        }
         final src = request.uri.queryParameters['src'];
         if (src == null || src.isEmpty) {
           request.response.statusCode = HttpStatus.badRequest;
@@ -217,11 +235,84 @@ class HlsRelay {
       await request.response.close();
       return;
     }
+    var text = rewritten.playlist;
+    // MASTER playlists (they carry #EXT-X-STREAM-INF) get an injected HLS
+    // SUBTITLES track: mpv Android's reduced libmpv rejects sub-add for EVERY
+    // external form (file, path, file://, http:// — "Can not open external
+    // file", 2026-08 logcats) yet enumerates HLS EXT-X-MEDIA tracks natively
+    // and selects them via the `sid` property. The player appends tmdbId to
+    // the master URL (see _urlWithSubtitleTmdb), so the track is present from
+    // the VERY FIRST fetch (before the subtitle content registers ~2s later);
+    // the player selects the injected track once the SRT is registered — mpv
+    // fetches /filmku-sub.vtt?tmdbId=, which serves the SRT as WebVTT.
+    // libass=true is already configured in MiniPlayerService, so the cue
+    // renders. (fallback: _subtitleTmdbId keeps non-appended streams working.)
+    final fromQuery = int.tryParse(request.uri.queryParameters['tmdbId'] ?? '');
+    final tmdbId = fromQuery ?? _subtitleTmdbId;
+    if (tmdbId != null && body.contains('#EXT-X-STREAM-INF')) {
+      text = _injectSubtitleTrack(text, tmdbId);
+    }
     request.response.headers.contentType =
         ContentType('application', 'vnd.apple.mpegurl');
     request.response.headers.set('Access-Control-Allow-Origin', '*');
-    request.response.add(utf8.encode(rewritten.playlist));
+    request.response.add(utf8.encode(text));
     await request.response.close();
+  }
+
+  /// Injects an `#EXT-X-MEDIA:TYPE=SUBTITLES` track into a rewritten MASTER
+  /// playlist and links its group from every variant stream. The track is
+  /// DEFAULT=NO/AUTOSELECT=NO so mpv lists it WITHOUT fetching it at open
+  /// (the subtitle is registered ~2s later — a pre-fetched empty VTT would
+  /// be cached and never refreshed). The player selects it explicitly once
+  /// the SRT is registered.
+  ///
+  /// HLS spec: `#EXTM3U` MUST stay the FIRST line — the media line is
+  /// inserted immediately AFTER it, never before (a tag preceding #EXTM3U
+  /// makes ffmpeg's hls demuxer — used by mpv — reject the whole playlist,
+  /// killing the video too; reviewer finding 2026-08).
+  String _injectSubtitleTrack(String playlist, int tmdbId) {
+    final port = _server!.port;
+    const name = 'FilmKU Indonesia';
+    final media = '#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="filmku",'
+        'NAME="$name",DEFAULT=NO,AUTOSELECT=NO,FORCED=NO,LANGUAGE="id",'
+        'URI="http://127.0.0.1:$port/filmku-sub.vtt?tmdbId=$tmdbId"';
+    // Link the subtitle group from every variant stream line.
+    final linked = playlist.replaceAllMapped(
+      RegExp(r'(#EXT-X-STREAM-INF:[^\n]*)'),
+      (m) => '${m.group(1)},SUBTITLES="filmku"',
+    );
+    return linked.startsWith('#EXTM3U\n')
+        ? linked.replaceFirst('#EXTM3U\n', '#EXTM3U\n$media\n')
+        : '$media\n$linked';
+  }
+
+  /// Serves a registered external subtitle (`/filmku-sub.vtt?tmdbId={id}`)
+  /// as WebVTT — the HLS-track form the Android libmpv build actually loads.
+  /// Returns a valid empty VTT when the slot is not yet registered (mpv only
+  /// requests this URL AFTER the track is selected, which the player does
+  /// only once the content exists, so this is just a safety net).
+  Future<void> _serveSubtitleVtt(HttpRequest request) async {
+    final id = int.tryParse(request.uri.queryParameters['tmdbId'] ?? '');
+    final content = id != null ? _subtitleSlots[id] : null;
+    final vtt = content == null ? 'WEBVTT\n\n' : HlsRelay.srtToVtt(content);
+    request.response.headers.contentType =
+        ContentType('text', 'vtt', charset: 'utf-8');
+    request.response.headers.set('Access-Control-Allow-Origin', '*');
+    request.response.add(utf8.encode(vtt));
+    await request.response.close();
+  }
+
+  /// Converts SRT text to WebVTT (the HLS subtitle format). Handles BOM,
+  /// CRLF, and SRT's comma timestamps (`00:00:01,000`) → WebVTT dots
+  /// (`00:00:01.000`). SRT numeric index lines become valid cue identifiers.
+  static String srtToVtt(String srt) {
+    var s = srt.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
+    if (s.startsWith('\uFEFF')) s = s.substring(1);
+    s = s.replaceAllMapped(
+      RegExp(r'(\d{2}:\d{2}:\d{2}),(\d{3})'),
+      (m) => '${m.group(1)}.${m.group(2)}',
+    );
+    return 'WEBVTT\n\n$s\n';
   }
 
   Future<void> _serveSegment(HttpRequest request, String src) async {
